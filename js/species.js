@@ -131,6 +131,26 @@
   // 現在はティラノサウルスだけのモード。全種に戻すときは DG.SPECIES_ORDER = DG.ALL_SPECIES にする
   DG.SPECIES_ORDER = ['trex'];
 
+  // A second hunter that only exists where its model file does. models/local/ is not published, so on the public
+  // page this species is never loaded. `optional` is the ?model=<name> value that switches it on (game.js remembers it);
+  // if the file is missing the species is simply dropped. It hunts exactly like the T-rex (same speed and senses) and
+  // appears mixed in with them on the difficulty levels that have a `mix` value.
+  (function () {
+    const T = DG.SPECIES.trex;
+    DG.SPECIES.unk = Object.assign({}, T, {
+      key: 'unk', optional: 'irex', name: '未確認の大型獣脚類', sci: 'Theropoda indet.',
+      desc: '記録にない大型の獣脚類。ティラノサウルスより腕が長く、背から尾にかけて棘が並ぶ。難易度「とても難しい」でのみ、ティラノサウルスに混じって森に現れる。',
+      stats: '全長 約15m ／ 腰高 約3.8m ／ 最高速度 約27km/h',
+      model: {
+        file: 'models/local/irex.glb', local: true, title: '手元専用モデル（非公開・動きはティラノサウルスから移植）',
+        runSpeed: 10, ranges: T.model.ranges, lengthScale: 1.2, originZ: -0.28,
+        // no texture files exist for it: the hide is drawn by the shader in gltf_dino.js (colours are sRGB hex)
+        hide: { match: /body/, back: 0x4f5340, flank: 0x74765a, belly: 0xa79d7e, band: 0x2a2b21, mouth: 0x8a3b34, freq: 24, plateFreq: 6.5, bandFreq: 2.4, relief: 0.007 }
+      },
+      ai: Object.assign({}, T.ai, { maxCount: 5, roarPitch: 0.74 })
+    });
+  })();
+
   // textures cache per species
   DG.speciesTex = function (key) {
     const s = DG.SPECIES[key]; if (s._tex) return s._tex;

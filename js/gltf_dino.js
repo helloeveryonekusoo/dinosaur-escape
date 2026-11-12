@@ -37,6 +37,65 @@
     m.needsUpdate = true;
   }
 
+  // Procedural reptile hide for a model that came without textures (cfg.hide). Everything is computed in the
+  // fragment shader from the bind-pose position, so the pattern is seamless and stays glued to the skin when
+  // the animal moves: colour zones (dark back, paler flank and belly, cross bands, blotches), two sizes of
+  // scales from 3D cell noise with dirt in the creases, matching roughness, and a bump from the same height.
+  // An optional per-vertex `_mouth` attribute (0..1) marks the inside of the mouth, which is drawn as wet flesh.
+  function patchHide(m, hd) {
+    if (m.userData.hidePatched) return;
+    m.userData.hidePatched = true;
+    const c = h => { const k = new THREE.Color(h); return `vec3(${k.r.toFixed(4)},${k.g.toFixed(4)},${k.b.toFixed(4)})`; };
+    const f = (v, d) => (v == null ? d : v).toFixed(4);
+    m.vertexColors = false; m.color.set(0xffffff); m.metalness = 0;
+    m.onBeforeCompile = sh => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float _mouth;\nvarying vec3 vRepPos;\nvarying vec3 vRepNrm;\nvarying float vRepMouth;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRepPos = position; vRepNrm = normal; vRepMouth = _mouth;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vRepPos; varying vec3 vRepNrm; varying float vRepMouth;
+          vec3 repHash3(vec3 p){ p = vec3(dot(p,vec3(127.1,311.7,74.7)), dot(p,vec3(269.5,183.3,246.1)), dot(p,vec3(113.5,271.9,124.6))); return fract(sin(p)*43758.5453); }
+          float repHash1(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
+          float repNoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+            return mix(mix(mix(repHash1(i),repHash1(i+vec3(1,0,0)),f.x), mix(repHash1(i+vec3(0,1,0)),repHash1(i+vec3(1,1,0)),f.x), f.y),
+                       mix(mix(repHash1(i+vec3(0,0,1)),repHash1(i+vec3(1,0,1)),f.x), mix(repHash1(i+vec3(0,1,1)),repHash1(i+vec3(1,1,1)),f.x), f.y), f.z); }
+          // distance to the nearest and second nearest cell centre, and a random id of the nearest cell
+          vec3 repCells(vec3 x){ vec3 p=floor(x), f=fract(x); float d1=8.0, d2=8.0, id=0.0;
+            for(int k=-1;k<=1;k++) for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){ vec3 g=vec3(float(i),float(j),float(k)); vec3 o=repHash3(p+g); vec3 r=g+0.25+0.5*o-f; float d=dot(r,r); if(d<d1){ d2=d1; d1=d; id=o.z; } else if(d<d2){ d2=d; } }
+            return vec3(sqrt(d1), sqrt(d2), id); }
+          // tilt the normal by the surface gradient of a height field h (amp = relief in metres)
+          vec3 repBump(vec3 N, vec3 sp, float h, float amp){ vec3 dpx=dFdx(sp), dpy=dFdy(sp); float hx=dFdx(h), hy=dFdy(h); vec3 r1=cross(dpy,N), r2=cross(N,dpx); float det=dot(dpx,r1);
+            vec3 g=(hx*r1+hy*r2)*sign(det)/max(abs(det),1e-8); return normalize(N - amp*g); }`)
+        .replace('#include <color_fragment>', `
+          vec3 rp = vRepPos; float rny = normalize(vRepNrm).y;
+          float rn1 = repNoise(rp*0.8), rn2 = repNoise(rp*2.6+11.0), rn3 = repNoise(rp*7.5+5.0);
+          float rback = smoothstep(-0.35, 0.6, rny + (rn1-0.5)*0.7);
+          vec3 rcol = mix(${c(hd.belly)}, ${c(hd.flank)}, smoothstep(0.0, 0.5, rback)); rcol = mix(rcol, ${c(hd.back)}, smoothstep(0.45, 1.0, rback));
+          float rband = smoothstep(0.5, 0.85, 0.5+0.5*sin(rp.z*${f(hd.bandFreq, 2.4)} + (rn1-0.5)*5.0 + rp.y*0.9)) * smoothstep(0.3, 0.75, rback);
+          rcol = mix(rcol, ${c(hd.band)}, rband*0.7);
+          rcol *= 0.78 + 0.44*rn2;
+          rcol = mix(rcol, rcol*vec3(1.12,1.0,0.8), rn3*0.6);
+          float rskin = 1.0 - vRepMouth, rfw = length(fwidth(rp));
+          float rdetA = (1.0 - smoothstep(0.3, 0.9, rfw*${f(hd.freq, 24)})) * rskin, rdetB = (1.0 - smoothstep(0.3, 0.9, rfw*${f(hd.plateFreq, 6.5)})) * rskin;
+          vec3 rcA = repCells(rp*${f(hd.freq, 24)}), rcB = repCells(rp*${f(hd.plateFreq, 6.5)}+3.7);
+          // small scales: a narrow dark crease (rgA) and a wide rounded shoulder (rbead) so each one reads as a bead, not a flat tile.
+          // The larger cells only vary tint and swell gently; they draw no lines, so there is a single scale size.
+          float redA = rcA.y-rcA.x;
+          float rgA = smoothstep(0.02, 0.14, redA), rbead = smoothstep(0.0, 0.45, redA), rgB = smoothstep(0.0, 0.25, rcB.y-rcB.x);
+          rcol *= mix(0.84, mix(0.55, 1.0, rgA)*(0.8+0.25*rbead)*(0.88+0.24*rcA.z), rdetA);
+          rcol *= mix(1.0, 0.9+0.2*rcB.z, rdetB);
+          rcol = mix(rcol, ${c(hd.mouth)}*(0.6+0.4*rn3), vRepMouth);
+          float repH = (rgA*0.5 + rbead*0.7)*rdetA + rgB*1.2*rdetB + rn3*2.0*rskin;
+          float repRough = mix(mix(0.84, mix(0.96, 0.55, rbead), rdetA), 0.3, vRepMouth);
+          diffuseColor.rgb *= rcol;`)
+        .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = repRough;')
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\nnormal = repBump(normal, -vViewPosition, repH, ${f(hd.relief, 0.004)});`);
+    };
+    m.customProgramCacheKey = () => 'hide' + JSON.stringify(hd, (k, v) => v instanceof RegExp ? String(v) : v);
+    m.needsUpdate = true;
+  }
+
   // On phones the model's 2048px textures are redrawn at DG.Q.maxTex before they reach the GPU: a quarter of
   // the memory, and no visible loss on a small screen.
   function shrinkTextures(gltf) {
@@ -82,7 +141,7 @@
       scene.traverse(o => {
         if (!o.isMesh) return;
         o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
-        (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m) return; if (m.map) m.map.anisotropy = 8; m.envMapIntensity = 0.6; patchGloss(m); });
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m) return; if (m.map) m.map.anisotropy = 8; m.envMapIntensity = 0.6; patchGloss(m); if (cfg.hide && cfg.hide.match.test(m.name)) patchHide(m, cfg.hide); });
       });
       const bones = []; scene.traverse(o => { if (o.isBone) bones.push(o); });
       const find = re => bones.find(b => re.test(b.name));
@@ -101,7 +160,8 @@
       }
       const len = spec.body[spec.body.length - 1].z - spec.body[0].z;
       const s = len * (cfg.lengthScale || 1) / (alongX ? size.x : size.z);
-      scene.position.set(-cen.x, -box.min.y, -cen.z);
+      // originZ: model-space z that should sit over the animal's turning point (default: middle of its length)
+      scene.position.set(-cen.x, -box.min.y, cfg.originZ != null && !alongX ? -cfg.originZ : -cen.z);
       inner.scale.setScalar(s); inner.rotation.y = yaw;
       this.len = len; this.height = size.y * s;
 

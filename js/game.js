@@ -19,11 +19,12 @@
   //   lose  : seconds out of sight before a chase is given up
   //   items : multiplier on the pickups scattered over the map   startFlare : flares carried at the start
   //   flareTime : seconds a flare burns (and holds them)
+  //   mix   : share of the hunters that are the optional second species (species.js), when it is installed; 0 = T-rex only
   DG.DIFFS = {
     easy: { name: 'やさしい', count: 2, max: 6, spawnEvery: 60, sense: 1, speed: 1, lose: 7, items: 1, startFlare: 1, flareTime: 20 },
     normal: { name: '普通', count: 3, max: 7, spawnEvery: 50, sense: 1.12, speed: 1.04, lose: 8, items: 0.8, startFlare: 1, flareTime: 18 },
     hard: { name: '難しい', count: 4, max: 8, spawnEvery: 40, sense: 1.25, speed: 1.08, lose: 10, items: 0.6, startFlare: 1, flareTime: 15 },
-    vhard: { name: 'とても難しい', count: 5, max: 9, spawnEvery: 30, sense: 1.4, speed: 1.12, lose: 12, items: 0.45, startFlare: 0, flareTime: 12 }
+    vhard: { name: 'とても難しい', count: 5, max: 9, spawnEvery: 30, sense: 1.4, speed: 1.12, lose: 12, items: 0.45, startFlare: 0, flareTime: 12, mix: 0.5 }
   };
   DG.DIFF_ORDER = ['easy', 'normal', 'hard', 'vhard'];
   let diffKey = 'easy';
@@ -33,7 +34,8 @@
     diffKey = k; DF = DG.DIFFS[k]; try { localStorage.setItem('dg_difficulty', k); } catch (e) { }
     document.querySelectorAll('#diffBtns button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
     const kmh = Math.round(DG.SPECIES.trex.ai.run * DF.speed * 3.6);
-    $('diffInfo').innerHTML = `ティラノ：最初 ${DF.count}頭 → ${DF.spawnEvery}秒ごとに1頭増えて最大 ${DF.max}頭 ／ 走る速さ 約${kmh}km/h ／ 目と耳の届く距離 ${Math.round(DF.sense * 100)}%<br>` +
+    const mixed = DF.mix && dinos.some(a => a.s.optional);
+    $('diffInfo').innerHTML = `${mixed ? 'ティラノと未確認種（半々で混在）' : 'ティラノ'}：最初 ${DF.count}頭 →${DF.spawnEvery}秒ごとに1頭増えて最大 ${DF.max}頭 ／ 走る速さ 約${kmh}km/h ／ 目と耳の届く距離 ${Math.round(DF.sense * 100)}%<br>` +
       `アイテム：マップに ${DG.itemTotal(DF.items)}個` + (DF.startFlare ? `、最初に発煙筒 ${DF.startFlare}本` : '、最初は何も持たない') + ` ／ 発煙筒の効果 ${DF.flareTime}秒 ／ 見失うまで ${DF.lose}秒`;
   }
 
@@ -55,11 +57,21 @@
     addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
     setLoad(0.15, '白亜紀の森を生成中'); await frame();
     world = W.create(renderer);
+    // optional extra species kept only on this computer: open once with ?model=<name> (remembered), ?model=default to turn it off.
+    // If its model file is missing (as on the public page) the species is dropped and the game is unchanged.
+    let modelAlt = null;
+    try {
+      const q = /[?&]model=(\w+)/.exec(location.search);
+      if (q) { if (q[1] === 'default') localStorage.removeItem('dg_model'); else localStorage.setItem('dg_model', q[1]); }
+      modelAlt = localStorage.getItem('dg_model');
+    } catch (e) { }
+    for (const key in DG.SPECIES) if (DG.SPECIES[key].optional && DG.SPECIES[key].optional === modelAlt && !DG.SPECIES_ORDER.includes(key)) DG.SPECIES_ORDER.push(key);
     let k = 0;
-    for (const key of DG.SPECIES_ORDER) {
+    for (const key of DG.SPECIES_ORDER.slice()) {
       const s = DG.SPECIES[key];
       setLoad(0.3 + 0.6 * k / DG.SPECIES_ORDER.length, s.name + (s.model ? ' の3Dモデルを読み込み中' : ' の皮膚と骨格を生成中')); await frame();
       let gltf = s.model ? await DG.loadGLB(s.model.file) : null;
+      if (s.optional && !gltf) { DG.SPECIES_ORDER.splice(DG.SPECIES_ORDER.indexOf(key), 1); continue; }
       let tex = null;
       if (gltf) { try { new DG.GltfDino(s, gltf); } catch (e) { console.warn('model setup failed', s.model.file, e); gltf = null; } }
       if (!gltf) { setLoad(0.3 + 0.6 * k / DG.SPECIES_ORDER.length, s.name + ' の皮膚と骨格を生成中'); await frame(); tex = DG.speciesTex(key); }
@@ -76,7 +88,7 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, world, dinos, P, items, get state() { return state; }, set state(v) { state = v; },
+    DG._dbg = { renderer, camera, world, dinos, P, items, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -122,7 +134,7 @@
       a.state = 'investigate'; a.lureKind = kind; a.target.copy(pos); a.arrived = false; a.roarHold = 0;
       a.timer = 45; a.bait = src || null; a.aware = Math.min(a.aware, 0.3); n++;
     });
-    if (n) msg(kind === 'meat' ? '🍖 ティラノが肉の匂いに気付いた' : '🎇 ティラノが発煙筒の光に引き寄せられた', 2.2);
+    if (n) msg(kind === 'meat' ? `🍖 ${hunterName()}が肉の匂いに気付いた` : `🎇 ${hunterName()}が発煙筒の光に引き寄せられた`, 2.2);
   };
 
   // Tranquilizer dart: a ray from the eye along the aim; the body is approximated by a few spheres.
@@ -237,8 +249,8 @@
     dexDino = dinos.find(a => a.s.key === key); dexDino.d.root.visible = true; dexT = 0; dexS = 0; dexV = 0;
     const m = s._usesModel ? s.model : null;
     $('dexInfo').innerHTML = `<div class="nm">${s.name}</div><div class="sci">${s.sci}</div><div class="ds">${(m && m.desc) || s.desc}</div><div class="st">${s.stats}</div>` +
-      (m ? `<div class="st">3Dモデル: “${m.title}” by ${m.author}（CC BY 4.0）</div>` : '');
-    $('credits').innerHTML = DG.SPECIES_ORDER.map(k => DG.SPECIES[k]).filter(x => x._usesModel)
+      (m ? (m.local ? `<div class="st">3Dモデル: ${m.title}</div>` : `<div class="st">3Dモデル: “${m.title}” by ${m.author}（CC BY 4.0）</div>`) : '');
+    $('credits').innerHTML = DG.SPECIES_ORDER.map(k => DG.SPECIES[k]).filter(x => x._usesModel && !x.model.local)
       .map(x => `“<a href="${x.model.url}" target="_blank" rel="noopener">${x.model.title}</a>” by ${x.model.author} — <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>`).join('<br>');
   }
   function toMenu() {
@@ -258,16 +270,25 @@
     const along = (f, side) => new V(lerp(W.START.x, W.GOAL.x, f) + side, 0, lerp(W.START.z, W.GOAL.z, f));
     // (the extra T-rexes of the harder levels start well off to the sides, never close to the start)
     const spots = { trex: [[0.42, 10], [0.78, -25], [0.6, 70], [0.32, -80], [0.9, 60]], utah: [[0.78, 35]], trike: [[0.3, -45], [0.36, -55]], carno: [[0.62, -60]] };
+    // This game's hunters, in the order they appear: the first DF.count start on the map, the rest arrive one by one.
+    // On a level with `mix`, every so-many-th place goes to the optional second species (evenly spread), if it is installed.
+    const main = dinos.filter(a => a.ai.spawnEvery && !a.s.optional), extra = dinos.filter(a => a.ai.spawnEvery && a.s.optional);
+    const mix = extra.length ? (DF.mix || 0) : 0; roster = [];
+    for (let i = 0, im = 0, ie = 0; i < DF.max; i++) {
+      const a = (Math.floor((i + 1) * mix) > Math.floor(i * mix) && ie < extra.length) ? extra[ie++] : main[im++];
+      if (a) roster.push(a);
+    }
     const used = {};
     dinos.forEach(a => {
-      const k = a.s.key, n = used[k] = (used[k] || 0) + 1, sp = spots[k][Math.min(n - 1, spots[k].length - 1)];
+      const hunter = !!a.ai.spawnEvery, ri = roster.indexOf(a);
+      const k = hunter ? 'trex' : a.s.key, n = hunter ? (ri < 0 ? spots.trex.length : ri + 1) : (used[k] = (used[k] || 0) + 1), sp = spots[k][Math.min(n - 1, spots[k].length - 1)];
       const p = along(sp[0], sp[1]).add(new V((rnd() - 0.5) * 30, 0, (rnd() - 0.5) * 30));
       if (k === 'utah') p.add(new V(n * 6, 0, n * 4));
-      activateDino(a, p, rnd() * Math.PI * 2, n <= (a.ai.spawnEvery ? DF.count : a.ai.count));
+      activateDino(a, p, rnd() * Math.PI * 2, hunter ? ri >= 0 && ri < DF.count : n <= a.ai.count);
     });
     spawnT = SPAWN_EVERY();
     state = 'play'; lock();
-    msg('ティラノサウルスに見つかるな — 赤い煙の救難信号を目指せ', 5);
+    msg(`${roster.some(a => a.s.optional) ? '肉食恐竜' : 'ティラノサウルス'}に見つかるな — 赤い煙の救難信号を目指せ`, 5);
   }
 
   // place / reset a dinosaur; inactive ones stay hidden until they are spawned in later
@@ -279,14 +300,15 @@
     a.d.root.visible = active;
   }
   // every so often another T-rex arrives, out of the player's sight, 170-230 m away
-  let spawnT = 0;
-  const SPAWN_EVERY = () => dinos.some(a => a.ai.spawnEvery) ? DF.spawnEvery : 0;
-  const canSpawn = () => dinos.filter(a => a.ai.spawnEvery && a.d.root.visible).length < DF.max && dinos.some(a => a.ai.spawnEvery && !a.d.root.visible);
+  let spawnT = 0, roster = [];
+  const hunterName = () => roster.some(a => a.s.optional) ? '肉食恐竜' : 'ティラノ';
+  const SPAWN_EVERY = () => roster.length ? DF.spawnEvery : 0;
+  const canSpawn = () => roster.filter(a => a.d.root.visible).length < DF.max && roster.some(a => !a.d.root.visible);
   function trySpawn(dt) {
     if (!SPAWN_EVERY() || !canSpawn()) return;
     spawnT -= dt; if (spawnT > 0) return;
     spawnT = SPAWN_EVERY();
-    const a = dinos.find(x => !x.d.root.visible && x.ai.spawnEvery); if (!a) return;
+    const a = roster.find(x => !x.d.root.visible); if (!a) return;
     const camYaw = P.yaw;
     for (let i = 0; i < 40; i++) {
       const ang = Math.random() * Math.PI * 2, dist = 170 + Math.random() * 60;
@@ -298,7 +320,7 @@
       a.home.lerp(P.pos, 0.25);
       const n = dinos.filter(x => x.d.root.visible).length;
       A.roar(new V(p.x, W.height(p.x, p.z) + 4, p.z), a.ai.roarPitch, 2.2, 2.6);
-      msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${n}頭）`, 3);
+      msg(`🦖 森の奥で新たな咆哮が響いた…（${hunterName()} ${n}頭）`, 3);
       return;
     }
   }
