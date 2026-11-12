@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>ダイナソー・エスケープ</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:"Yu Gothic UI","Meiryo",system-ui,sans-serif;color:#eee}
@@ -59,6 +61,49 @@
   #credits{position:fixed;right:14px;bottom:10px;font-size:11px;color:#999;text-align:right;line-height:1.6;max-width:46vw;pointer-events:auto}
   #credits a{color:#bbb}
   #pause{display:none;z-index:25;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+
+  /* ---- touch devices (body.touch is set by game.js on phones and tablets) ---- */
+  #touch,#rotate,#helpTouch{display:none}
+  body.touch{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none}
+  body.touch button:hover{background:rgba(20,18,12,.7);color:#f2e6c8}
+  body.touch #diffBtns button.on,body.touch #diffBtns button.on:hover{background:#c9a24a;color:#111}
+  body.touch #help{display:none} body.touch #helpTouch{display:block;font-size:12px;color:#aaa;margin-top:14px;line-height:1.8}
+  body.touch #menu{touch-action:pan-y;overflow-y:auto}
+  #touch{z-index:12}
+  #stickZone{position:absolute;left:0;bottom:0;width:28%;height:75%;pointer-events:auto;touch-action:none}
+  #stick{position:absolute;left:calc(84px + env(safe-area-inset-left));top:calc(100% - 96px);width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;
+         border:2px solid rgba(255,255,255,.28);background:rgba(0,0,0,.18);opacity:.55}
+  #stick.on{opacity:.9}
+  #stick i{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:rgba(242,230,200,.55);border:1px solid rgba(255,255,255,.5)}
+  #touch button{position:absolute;width:62px;height:62px;padding:0;border-radius:50%;font-size:12px;letter-spacing:0;line-height:1.2;
+                background:rgba(0,0,0,.32);border:2px solid rgba(255,255,255,.4);color:#fff;touch-action:none}
+  #touch button.on{background:rgba(201,162,74,.75);border-color:#f2e6c8;color:#111}
+  #tRun{right:calc(88px + env(safe-area-inset-right));bottom:14px}
+  #tJump{right:calc(16px + env(safe-area-inset-right));bottom:14px}
+  #tCrouch{right:calc(88px + env(safe-area-inset-right));bottom:86px}
+  #tUse{right:calc(16px + env(safe-area-inset-right));bottom:86px}
+  #touch #tPause{right:calc(12px + env(safe-area-inset-right));top:10px;width:40px;height:40px;font-size:13px}
+  body.touch #inv{bottom:22px} body.touch #inv .slot{width:40px;height:40px;font-size:21px;pointer-events:auto;touch-action:none}
+  body.touch #inv .key{display:none} body.touch #inv .iname{bottom:46px}
+  body.touch #stam{bottom:10px;width:200px}
+  body.touch #status{left:calc(12px + env(safe-area-inset-left));top:70px;bottom:auto;font-size:11px;line-height:1.6}
+  body.touch #msg{font-size:15px;letter-spacing:.08em;top:26%;padding:0 12px}
+  body.touch #compass{width:260px}
+  #rotate{z-index:60;background:#0b0d0a;align-items:center;justify-content:center;text-align:center;font-size:16px;letter-spacing:.15em;line-height:2;pointer-events:auto}
+  @media (orientation:portrait){ body.touch #rotate{display:flex} }
+  /* short screens (a phone held sideways): the title screen has to fit in ~360px of height */
+  @media (max-height:560px){
+    h1{font-size:24px;letter-spacing:.14em} .sub{font-size:11px;margin-top:2px;letter-spacing:.2em}
+    #menu{padding:10px calc(4vw + env(safe-area-inset-right)) 12px calc(4vw + env(safe-area-inset-left));justify-content:center}
+    #dexInfo{min-height:0;margin-top:6px;max-width:none} #dexInfo .nm{font-size:16px;display:inline} #dexInfo .sci{display:inline;font-size:12px;margin:0 0 0 8px} #dexInfo .ds,#dexInfo .st{display:none}
+    #diff{margin-top:8px;gap:8px} #diffBtns{gap:6px} #diffBtns button{padding:7px 11px;font-size:12px;letter-spacing:.05em}
+    #diffInfo{font-size:11px;line-height:1.5;margin-top:6px} #menu .btns{margin-top:8px} #menu .btns button{padding:9px 22px;font-size:14px}
+    body.touch #helpTouch{font-size:11px;line-height:1.5;margin-top:8px}
+    #credits{font-size:11px;right:10px;bottom:4px;max-width:60vw;line-height:1.3}
+    #end h2{font-size:30px} #end p{font-size:13px;margin:8px 12px;text-align:center} #end button,#pause button{padding:9px 22px}
+    #pause h2{margin:0 0 10px} #goal{font-size:12px;letter-spacing:.05em;top:10px;white-space:nowrap} #compass{top:32px}
+    #loading .bar{width:240px}
+  }
 </style>
 </head>
 <body>
@@ -81,6 +126,8 @@
   地割れ：細い所はダッシュ＋ジャンプで飛び越えられる。ティラノは地割れに入れず、端まで回り込むしかない。落ちたら端の浅い所から出る。<br>
   倒木：歩いては越えられないが、ジャンプで飛び越えられる。ティラノはまたいで追ってくる。<br>
   アイテム：1〜6 / ホイールで選択、左クリック / F で使う。🎇発煙筒 ／ 🍖生肉 ／ 🎯麻酔銃 ／ 🟫迷彩泥 ／ 💉アドレナリン ／ 📡探知機</div>
+  <div id="helpTouch">画面の左側をドラッグで移動 ／ 右側をドラッグで視点 ／ 右下のボタンで 走る・跳ぶ・しゃがむ・アイテムを使う ／ アイテム欄をタップで選択<br>
+  赤い煙の救難信号までたどり着けば脱出成功。走ると足音で気付かれる。シダの茂みでしゃがむと隠れられる。細い地割れと倒木は走って跳べば越えられる。</div>
   <div id="credits"></div>
 </div>
 <div id="hud" class="layer">
@@ -93,6 +140,11 @@
   <div id="stam"><i id="stamBar"></i></div>
   <div id="inv"></div>
 </div>
+<div id="touch" class="layer">
+  <div id="stickZone"></div><div id="stick"><i></i></div>
+  <button id="tRun">走る</button><button id="tJump">跳ぶ</button><button id="tCrouch">しゃ<br>がむ</button><button id="tUse">使う</button><button id="tPause">Ⅱ</button>
+</div>
+<div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
 <div id="pause" class="layer"><h2>PAUSE</h2><button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
 <div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
 

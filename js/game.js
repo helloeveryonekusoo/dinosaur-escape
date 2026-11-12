@@ -39,10 +39,17 @@
 
   DG.boot = async function () {
     setLoad(0.05, 'レンダラー初期化'); await frame();
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.setSize(innerWidth, innerHeight);
+    // Phones and tablets get touch controls and a lighter picture: fewer plants, a smaller shadow map, a lower
+    // pixel ratio and smaller model textures. (?touch=1 / ?touch=0 in the address forces it on or off.)
+    const forced = /[?&]touch=([01])/.exec(location.search);
+    DG.MOBILE = forced ? forced[1] === '1' : (matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+    DG.Q = DG.MOBILE ? { veg: 0.55, fern: 0.7, shadow: 1536, soft: false, pr: Math.min(devicePixelRatio, 1.25), aa: false, maxTex: 1024 }
+      : { veg: 1, fern: 1, shadow: 4096, soft: true, pr: Math.min(devicePixelRatio, 1.5), aa: true, maxTex: 0 };
+    if (DG.MOBILE) document.body.classList.add('touch');
+    renderer = new THREE.WebGLRenderer({ antialias: DG.Q.aa, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(DG.Q.pr); renderer.setSize(innerWidth, innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.85;
-    renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.shadowMap.enabled = true; renderer.shadowMap.type = DG.Q.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     document.body.prepend(renderer.domElement);
     camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.05, 6000);
     addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
@@ -141,8 +148,59 @@
   };
 
   // ---------------- UI ----------------
-  const lock = () => { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { } };
+  const lock = () => { if (DG.MOBILE) return; try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { } };
+
+  // ---- touch controls: a floating stick on the left, drag on the right to look, round buttons bottom right ----
+  const TI = { mx: 0, mz: 0, run: false, jump: false };
+  function bindTouch() {
+    const zone = $('stickZone'), base = $('stick'), knob = base.firstElementChild, R = 50;
+    let sid = null, sx = 0, sy = 0;
+    const stickEnd = e => { if (e.pointerId !== sid) return; sid = null; TI.mx = TI.mz = 0; knob.style.transform = ''; base.classList.remove('on'); base.style.left = base.style.top = ''; };
+    zone.addEventListener('pointerdown', e => {
+      if (sid !== null) return; sid = e.pointerId; try { zone.setPointerCapture(sid); } catch (er) { }
+      sx = e.clientX; sy = e.clientY; base.style.left = sx + 'px'; base.style.top = sy + 'px'; base.classList.add('on'); e.preventDefault();
+    });
+    zone.addEventListener('pointermove', e => {
+      if (e.pointerId !== sid) return;
+      let dx = e.clientX - sx, dy = e.clientY - sy; const l = Math.hypot(dx, dy); if (l > R) { dx *= R / l; dy *= R / l; }
+      knob.style.transform = `translate(${dx}px,${dy}px)`;
+      TI.mx = Math.abs(dx) > R * 0.22 ? dx / R : 0; TI.mz = Math.abs(dy) > R * 0.22 ? -dy / R : 0;
+    });
+    zone.addEventListener('pointerup', stickEnd); zone.addEventListener('pointercancel', stickEnd);
+    const cv = renderer.domElement; let lid = null, lx = 0, ly = 0;
+    cv.style.touchAction = 'none';
+    cv.addEventListener('pointerdown', e => { if (lid !== null || state !== 'play') return; lid = e.pointerId; try { cv.setPointerCapture(lid); } catch (er) { } lx = e.clientX; ly = e.clientY; });
+    cv.addEventListener('pointermove', e => {
+      if (e.pointerId !== lid || state !== 'play') return;
+      P.yaw -= (e.clientX - lx) * 0.0055; P.pitch = clamp(P.pitch - (e.clientY - ly) * 0.0055, -1.45, 1.45); lx = e.clientX; ly = e.clientY;
+    });
+    const lookEnd = e => { if (e.pointerId === lid) lid = null; };
+    cv.addEventListener('pointerup', lookEnd); cv.addEventListener('pointercancel', lookEnd);
+    const press = (id, down, up) => {
+      const b = $(id);
+      b.addEventListener('pointerdown', e => { e.preventDefault(); if (state === 'play') down(b); });
+      if (up) ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, () => up(b)));
+    };
+    press('tJump', () => TI.jump = true, () => TI.jump = false);
+    press('tRun', () => TI.run = !TI.run);
+    press('tCrouch', () => P.crouch = !P.crouch);
+    press('tUse', () => items.use());
+    press('tPause', () => { state = 'pause'; $('pause').style.display = 'flex'; });
+    document.addEventListener('contextmenu', e => e.preventDefault());
+  }
+  let touchShown = null;
+  function touchUI() { // show the controls only while playing; keep the toggle buttons in step with the game
+    const on = state === 'play';
+    if (on !== touchShown) { touchShown = on; $('touch').style.display = on ? 'block' : 'none'; if (!on) { TI.mx = TI.mz = 0; TI.jump = false; } }
+    if (on) { $('tRun').classList.toggle('on', TI.run); $('tCrouch').classList.toggle('on', P.crouch); }
+  }
+  function goFullscreen() { // best effort: fill the screen and hold it sideways (not available on every phone)
+    try { const el = document.documentElement, p = el.requestFullscreen && el.requestFullscreen({ navigationUI: 'hide' }); if (p && p.catch) p.catch(() => { }); } catch (e) { }
+    try { const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); if (p && p.catch) p.catch(() => { }); } catch (e) { }
+  }
+
   function bindUI() {
+    if (DG.MOBILE) bindTouch();
     if (DG.SPECIES_ORDER.length < 2) { $('btnPrev').style.display = $('btnNext').style.display = 'none'; }
     DG.DIFF_ORDER.forEach(k => {
       const b = document.createElement('button'); b.textContent = DG.DIFFS[k].name; b.dataset.k = k; b.onclick = () => { A.init(); setDiff(k); };
@@ -151,8 +209,8 @@
     setDiff(diffKey);
     $('btnPrev').onclick = () => { A.init(); showDex(dexIdx - 1); };
     $('btnNext').onclick = () => { A.init(); showDex(dexIdx + 1); };
-    $('btnStart').onclick = () => { A.init(); startGame(); };
-    $('btnResume').onclick = () => { lock(); };
+    $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); startGame(); };
+    $('btnResume').onclick = () => { if (DG.MOBILE) { state = 'play'; $('pause').style.display = 'none'; } else lock(); };
     $('btnQuit').onclick = $('btnTitle').onclick = () => toMenu();
     $('btnRetry').onclick = () => startGame();
     addEventListener('keydown', e => {
@@ -194,7 +252,7 @@
   function startGame() {
     ['menu', 'end', 'pause'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block';
     P.pos.set(W.START.x, W.height(W.START.x, W.START.z) + 1.65, W.START.z); P.vel.set(0, 0, 0);
-    P.yaw = Math.atan2(-(W.GOAL.x - W.START.x), -(W.GOAL.z - W.START.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false;
+    P.yaw = Math.atan2(-(W.GOAL.x - W.START.x), -(W.GOAL.z - W.START.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
     killer = null; runT = 0; shake = 0; items.reset(DF);
     const rnd = DG.N.rng((Math.random() * 1e9) | 0);
     const along = (f, side) => new V(lerp(W.START.x, W.GOAL.x, f) + side, 0, lerp(W.START.z, W.GOAL.z, f));
@@ -248,12 +306,12 @@
   // ---------------- player ----------------
   const fwd = new V(), right = new V();
   function updatePlayer(dt) {
-    const sprintKey = keys.ShiftLeft || keys.ShiftRight;
-    let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+    const sprintKey = keys.ShiftLeft || keys.ShiftRight || TI.run;
+    let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + TI.mx, mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + TI.mz;
     const moving = mx || mz;
     const adr = items.adren > 0;
     if (P.stam <= 0) P.exhausted = true; if (P.exhausted && (P.stam > 0.35 || adr)) P.exhausted = false;
-    const sprint = sprintKey && moving && !P.exhausted && !P.crouch && mz > 0;
+    const sprint = sprintKey && moving && !P.exhausted && !P.crouch && mz > 0.3;
     const spd = P.crouch ? 2.0 : sprint ? (adr ? 8.8 : 7.8) : 4.3;
     P.stam = clamp(P.stam + (sprint ? (adr ? 0 : -0.15) : (moving ? 0.08 : 0.14)) * dt, 0, 1);
     fwd.set(-Math.sin(P.yaw), 0, -Math.cos(P.yaw)); right.set(-fwd.z, 0, fwd.x);
@@ -261,7 +319,7 @@
     const k = 1 - Math.exp(-dt * (P.ground ? 10 : 1.5));
     P.vel.x = lerp(P.vel.x, wish.x, k); P.vel.z = lerp(P.vel.z, wish.z, k);
     P.vel.y -= 22 * dt;
-    if (P.ground && keys.Space && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
+    if (P.ground && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
     const px = P.pos.x, pz = P.pos.z, g0 = W.height(px, pz);
     P.pos.addScaledVector(P.vel, dt);
     world.collide(P.pos, 0.35, P.pos.y - P.eye); // fallen logs can be jumped over
@@ -494,7 +552,7 @@
   function loop() { tick(Math.min(clock.getDelta(), 1 / 20)); }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   function tick(dt) {
-    T += dt;
+    T += dt; if (DG.MOBILE) touchUI();
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
       const R = 4 + a.s.ai.size * 7, cx = W.START.x, cz = W.START.z - 12; // centre of the start glade (see okAt in world.js)

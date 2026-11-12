@@ -165,6 +165,8 @@
   W.create = function (renderer) {
     const scene = new THREE.Scene();
     const T = DG.T, rnd = N.rng(77);
+    // quality profile (set by game.js; a phone gets fewer plants and a smaller shadow map)
+    const Q = DG.Q || { veg: 1, fern: 1, shadow: 4096 };
     // ---- sky & lights ----
     const sky = new THREE_Sky(); sky.scale.setScalar(4500);
     const su = sky.material.uniforms; su.turbidity.value = 9; su.rayleigh.value = 1.6; su.mieCoefficient.value = 0.006; su.mieDirectionalG.value = 0.82;
@@ -179,7 +181,7 @@
     // pale, slightly blue haze: distance washes things out toward the colour of the sky (aerial perspective)
     scene.fog = new THREE.FogExp2(0xb1bfc0, 0.0075);
     const sun = new THREE.DirectionalLight(0xffe4bc, 2.9);
-    sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+    sun.castShadow = true; sun.shadow.mapSize.set(Q.shadow, Q.shadow);
     const sc = sun.shadow.camera; sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 250;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
     scene.add(sun, sun.target);
@@ -364,6 +366,7 @@
     // and leave gaps where it is low. o.clump = {n, r0, r, B, o, s}: up to n companions within r0..r0+r of each one
     // (saplings round a parent tree, stones round a boulder), which is how things actually grow and fall.
     const place = (B, n, o) => {
+      n = Math.round(n * (o.q == null ? Q.veg : o.q));
       let c = 0;
       for (let tries = 0; c < n && tries < n * 14; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
@@ -503,7 +506,7 @@
     // fallen logs: lie along the slope, half sunk into the litter. They block walking but are low enough to
     // jump over (each collider records the height of the log's top), and a dinosaur simply steps over them.
     {
-      const L = 8, r = 0.38, n = 240, lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
+      const L = 8, r = 0.38, n = Math.round(240 * Q.veg), lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
       for (let i = 0; i < lp.count; i++) {
         const x = lp.getX(i), y = lp.getY(i), z = lp.getZ(i), t = y / L + 0.5, a = Math.atan2(z, x);
         const k = 1 + (0.1 * Math.sin(a * 3 + t * 5) + 0.06 * Math.sin(a * 7 - t * 11)) * Math.min(1, Math.sin(Math.PI * t) * 3);
@@ -539,12 +542,12 @@
     // tall ferns: thickets you can hide in (they grow exactly where cover() says there is cover)
     const gParts = crown(11, 1.7, 0.65, 1.1, -1.05, rnd, 0.02, 4);
     const fernB = batch(merge(gParts.map(p => ({ geo: p.geo, group: 0 }))), fernMat, { far: 170 });
-    place(fernB, 44000, { clear: 6, dens: (x, z) => N.fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
+    place(fernB, 44000, { q: Q.fern, clear: 6, dens: (x, z) => N.fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
     // low plants: small ferns and seedlings covering the open floor, thick in clearings where light reaches the
     // ground and thin under closed canopy. Too low to hide in.
     {
       const dens = (x, z) => (0.3 + 0.7 * ss(0.35, 0.6, N.fbm2(x / 22, z / 22, 220, 2))) * (0.2 + 0.8 * (1 - canopy(x, z)));
-      for (let c = 0, tries = 0; c < 140000 && tries < 1400000; tries++) {
+      for (let c = 0, tries = 0; c < 140000 * Q.veg && tries < 1400000; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
         if (rnd() > dens(x, z)) continue;
         putLow(x, z); c++;

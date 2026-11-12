@@ -198,9 +198,15 @@
 
     function renderHud() {
       if (!hudEl) return;
-      hudEl.innerHTML = ORDER.map((k, i) => `<div class="slot${i === S.sel ? ' on' : ''}${S.inv[k] ? '' : ' empty'}"><span class="key">${i + 1}</span>${TYPES[k].icon}<span class="cnt">${S.inv[k] || 0}</span></div>`).join('') +
-        `<div class="iname">${TYPES[ORDER[S.sel]].name} — ${TYPES[ORDER[S.sel]].desc}</div>`;
+      const T = TYPES[ORDER[S.sel]];
+      hudEl.innerHTML = ORDER.map((k, i) => `<div class="slot${i === S.sel ? ' on' : ''}${S.inv[k] ? '' : ' empty'}" data-i="${i}"><span class="key">${i + 1}</span>${TYPES[k].icon}<span class="cnt">${S.inv[k] || 0}</span></div>`).join('') +
+        `<div class="iname">${DG.MOBILE ? T.name : T.name + ' — ' + T.desc}</div>`; // a phone has no room for the description here
     }
+    // touch: tap a slot to select it (its description is shown as a message instead)
+    if (hudEl) hudEl.addEventListener('pointerdown', e => {
+      const s = e.target.closest && e.target.closest('.slot'); if (!s || !DG.MOBILE) return;
+      e.preventDefault(); S.select(+s.dataset.i); const T = TYPES[ORDER[S.sel]]; msg(`${T.icon} ${T.name}：${T.desc}`, 2.5);
+    });
     S.reset();
     return S;
   };

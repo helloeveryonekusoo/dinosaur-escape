@@ -37,13 +37,34 @@
     m.needsUpdate = true;
   }
 
+  // On phones the model's 2048px textures are redrawn at DG.Q.maxTex before they reach the GPU: a quarter of
+  // the memory, and no visible loss on a small screen.
+  function shrinkTextures(gltf) {
+    const max = DG.Q && DG.Q.maxTex; if (!max) return;
+    const seen = new Set();
+    gltf.scene.traverse(o => {
+      if (!o.isMesh) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+        for (const k in m) {
+          const t = m[k]; if (!t || !t.isTexture || seen.has(t) || !t.image) continue; seen.add(t);
+          const w = t.image.width, h = t.image.height; if (!w || Math.max(w, h) <= max) continue;
+          try {
+            const s = max / Math.max(w, h), c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
+            c.getContext('2d').drawImage(t.image, 0, 0, c.width, c.height);
+            if (t.image.close) t.image.close(); t.image = c; t.needsUpdate = true;
+          } catch (e) { console.warn('texture shrink failed', e); }
+        }
+      });
+    });
+  }
+
   const cache = {};
   DG.loadGLB = function (url) {
     if (!cache[url]) cache[url] = new Promise(res => {
       if (location.protocol === 'file:') { res(null); return; }
       try {
         const l = new THREE_GLTFLoader(); l.register(p => new SpecGlossPlugin(p));
-        l.load(url, g => res(g), undefined, e => { console.warn('model load failed:', url, e && e.message); res(null); });
+        l.load(url, g => { shrinkTextures(g); res(g); }, undefined, e => { console.warn('model load failed:', url, e && e.message); res(null); });
       } catch (e) { res(null); }
     });
     return cache[url];
