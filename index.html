@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ダイナソー・エスケープ</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:"Yu Gothic UI","Meiryo",system-ui,sans-serif;color:#eee}
+  canvas{display:block}
+  .layer{position:fixed;inset:0;pointer-events:none}
+  #loading{display:flex;align-items:center;justify-content:center;flex-direction:column;background:#0b0d0a;pointer-events:auto;z-index:50}
+  #loading .bar{width:320px;height:4px;background:#222;margin-top:18px;overflow:hidden;border-radius:2px}
+  #loading .bar i{display:block;height:100%;width:0;background:#c9a24a;transition:width .2s}
+  #loadText{font-size:13px;color:#999;margin-top:10px;letter-spacing:.1em}
+  h1{font-weight:800;letter-spacing:.18em;margin:0;font-size:44px;text-shadow:0 4px 30px rgba(0,0,0,.8)}
+  .sub{color:#c9a24a;letter-spacing:.4em;font-size:12px;margin-top:6px}
+  #menu{display:none;flex-direction:column;justify-content:flex-end;padding:0 6vw 8vh;pointer-events:auto;z-index:20;
+        background:linear-gradient(90deg,rgba(0,0,0,.75) 0%,rgba(0,0,0,.25) 45%,rgba(0,0,0,0) 70%)}
+  #menu .btns{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
+  button{pointer-events:auto;font:inherit;font-size:15px;letter-spacing:.12em;color:#f2e6c8;background:rgba(20,18,12,.7);
+         border:1px solid #c9a24a;padding:12px 26px;cursor:pointer;border-radius:2px}
+  button:hover{background:#c9a24a;color:#111}
+  #dexInfo{max-width:440px;margin-top:22px;min-height:120px}
+  #dexInfo .nm{font-size:28px;font-weight:700;letter-spacing:.1em}
+  #dexInfo .sci{font-style:italic;color:#c9a24a;font-size:14px;margin:2px 0 10px}
+  #dexInfo .ds{font-size:14px;line-height:1.8;color:#ccc}
+  #dexInfo .st{font-size:12px;color:#999;margin-top:8px;letter-spacing:.05em}
+  #help{font-size:12px;color:#aaa;margin-top:18px;line-height:1.9}
+  #diff{display:flex;align-items:center;gap:10px;margin-top:20px;flex-wrap:wrap}
+  #diff .lbl{font-size:12px;color:#c9a24a;letter-spacing:.3em}
+  #diffBtns{display:flex;gap:8px;flex-wrap:wrap}
+  #diffBtns button{padding:7px 16px;font-size:13px}
+  #diffBtns button.on{background:#c9a24a;color:#111}
+  #diffInfo{font-size:12px;color:#cfc6ad;margin-top:10px;line-height:1.8;max-width:640px}
+  #hud{display:none;z-index:10}
+  #stam{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);width:260px;height:5px;background:rgba(255,255,255,.15);border-radius:3px}
+  #stam i{display:block;height:100%;width:100%;background:#e8e2cf;border-radius:3px}
+  #goal{position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;font-size:13px;letter-spacing:.15em;text-shadow:0 1px 4px #000}
+  #compass{position:absolute;top:44px;left:50%;transform:translateX(-50%);width:360px;height:22px;overflow:hidden;
+           mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent)}
+  #compass .mk{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:#ddd;text-shadow:0 1px 3px #000}
+  #compass .gl{color:#ff5a3c;font-size:16px}
+  #compass .dn{color:#ffb070;font-size:12px;white-space:nowrap}
+  #inv{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);display:flex;gap:6px;align-items:flex-end}
+  #inv .slot{position:relative;width:46px;height:46px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);border-radius:4px;
+             display:flex;align-items:center;justify-content:center;font-size:24px}
+  #inv .slot.on{border-color:#c9a24a;box-shadow:0 0 8px rgba(201,162,74,.6)}
+  #inv .slot.empty{opacity:.4}
+  #inv .key{position:absolute;left:3px;top:1px;font-size:10px;color:#aaa}
+  #inv .cnt{position:absolute;right:4px;bottom:1px;font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 2px #000}
+  #inv .iname{position:absolute;bottom:54px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:12px;color:#ddd;text-shadow:0 1px 3px #000}
+  #msg{position:absolute;top:32%;left:0;right:0;text-align:center;font-size:20px;letter-spacing:.2em;text-shadow:0 2px 8px #000;opacity:0;transition:opacity .6s}
+  #vign{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(120,0,0,.85) 100%);opacity:0}
+  #cross{position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:rgba(255,255,255,.6)}
+  #status{position:absolute;left:24px;bottom:24px;font-size:12px;color:#bbb;line-height:1.8;text-shadow:0 1px 3px #000}
+  #end{display:none;z-index:30;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
+  #end h2{font-size:48px;letter-spacing:.2em;margin:0}
+  #end p{color:#ccc;letter-spacing:.1em}
+  #credits{position:fixed;right:14px;bottom:10px;font-size:11px;color:#999;text-align:right;line-height:1.6;max-width:46vw;pointer-events:auto}
+  #credits a{color:#bbb}
+  #pause{display:none;z-index:25;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+</style>
+</head>
+<body>
+<div id="loading" class="layer">
+  <h1>DINOSAUR ESCAPE</h1><div class="sub">ダイナソー・エスケープ</div>
+  <div class="bar"><i id="loadBar"></i></div><div id="loadText">読み込み中…</div>
+</div>
+<div id="menu" class="layer">
+  <h1>DINOSAUR ESCAPE</h1><div class="sub">ティラノサウルスの森から脱出せよ</div>
+  <div id="dexInfo"></div>
+  <div id="diff"><span class="lbl">難易度</span><span id="diffBtns"></span></div>
+  <div id="diffInfo"></div>
+  <div class="btns">
+    <button id="btnPrev">◀</button><button id="btnNext">▶</button>
+    <button id="btnStart">ゲーム開始</button>
+  </div>
+  <div id="help">WASD 移動 ／ Shift ダッシュ ／ Space ジャンプ ／ C しゃがむ（茂みに隠れる）／ マウス 視点 ／ Esc 一時停止<br>
+  森の奥の救難信号（赤い煙）までたどり着けば脱出成功。ティラノは時間とともに増えていく（頭数と間隔は難易度による）。<br>
+  走ると足音で気付かれる。木の多い場所では巨体のティラノは思うように進めない。<br>
+  地割れ：細い所はダッシュ＋ジャンプで飛び越えられる。ティラノは地割れに入れず、端まで回り込むしかない。落ちたら端の浅い所から出る。<br>
+  倒木：歩いては越えられないが、ジャンプで飛び越えられる。ティラノはまたいで追ってくる。<br>
+  アイテム：1〜6 / ホイールで選択、左クリック / F で使う。🎇発煙筒 ／ 🍖生肉 ／ 🎯麻酔銃 ／ 🟫迷彩泥 ／ 💉アドレナリン ／ 📡探知機</div>
+  <div id="credits"></div>
+</div>
+<div id="hud" class="layer">
+  <div id="vign"></div>
+  <div id="goal">救難信号まで <b id="dist">---</b> m　<span id="rexn"></span></div>
+  <div id="compass"></div>
+  <div id="cross"></div>
+  <div id="msg"></div>
+  <div id="status"></div>
+  <div id="stam"><i id="stamBar"></i></div>
+  <div id="inv"></div>
+</div>
+<div id="pause" class="layer"><h2>PAUSE</h2><button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
+<div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
+
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
+const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/game.js'];
+for (const f of files) {
+  await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
+}
+DG.boot().catch(e => { document.getElementById('loadText').textContent = 'エラー: ' + e.message; console.error(e); });
+</script>
+</body>
+</html>

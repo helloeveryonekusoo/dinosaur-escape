@@ -1,0 +1,7 @@
+# macOS metadata files
+._*
+.DS_Store
+# Windows
+Thumbs.db
+# screenshots saved by the debug helper in serve.ps1
+_shots/
