@@ -7,26 +7,47 @@
 
   // ---- ravines (地割れ): deep cracks crossing the route. Narrow stretches can be cleared with a running
   // jump; wide stretches cannot. A T-rex will not enter one and has to walk round via the shallow ends.
+  // ---- map seed: every noise field and random draw that lays out the map (terrain, ravines, trees, rocks…) is
+  // offset by SEED, so a new seed gives a new map. W.reseed(seed) picks the map; W.create then builds it.
+  let SEED = 0;
+  const fbm2 = (x, y, s, oct) => N.fbm2(x, y, s + SEED, oct);
+  const vnoise2 = (x, y, s) => N.vnoise2(x, y, s + SEED);
+
   W.RAVINE_DEPTH = 5; W.RAVINE_MARGIN = 9; // margin = half-width of the detailed mesh strip
-  W.RAVINES = (function () {
-    const rr = N.rng(991), out = [];
+  function makeRavines() {
+    const rr = N.rng(991 + SEED);
     const r = new V().subVectors(W.GOAL, W.START).normalize(), p = new V(-r.z, 0, r.x);
-    [0.24, 0.47, 0.68, 0.87].forEach((f, k) => {
-      const c = W.START.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * 60);
-      const ang = Math.atan2(p.x, p.z) + (rr() - 0.5) * 0.7, dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x);
-      const L = 170 + rr() * 80, n = 12, pts = [];
-      for (let i = 0; i < n; i++) {
-        const s = (i / (n - 1) - 0.5) * L, w = (N.vnoise2(i * 0.6, k * 7.3, 992) - 0.5) * 16;
-        pts.push(c.clone().addScaledVector(dir, s).addScaledVector(side, w));
-      }
-      const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
-      const xs = pts.map(q => q.x), zs = pts.map(q => q.z), m = W.RAVINE_MARGIN + 2;
-      out.push({ pts, cum, len: cum[n - 1], seed: 993 + k, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] });
-    });
+    const build = () => {
+      const out = [];
+      [0.24, 0.47, 0.68, 0.87].forEach((f0, k) => {
+        const f = f0 + (rr() - 0.5) * 0.07; // where along the route it crosses
+        const c = W.START.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * 90);
+        const ang = Math.atan2(p.x, p.z) + (rr() - 0.5) * 0.6, dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x);
+        const L = 160 + rr() * 100, n = 12, pts = [];
+        for (let i = 0; i < n; i++) {
+          const s = (i / (n - 1) - 0.5) * L, w = (vnoise2(i * 0.6, k * 7.3, 992) - 0.5) * 16;
+          pts.push(c.clone().addScaledVector(dir, s).addScaledVector(side, w));
+        }
+        const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+        const xs = pts.map(q => q.x), zs = pts.map(q => q.z), m = W.RAVINE_MARGIN + 2;
+        out.push({ pts, cum, len: cum[n - 1], seed: 993 + k, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] });
+      });
+      return out;
+    };
+    // two ravines must never meet: their mesh strips would overlap. Draw again until every pair is well apart.
+    const gap = (a, b) => { let d = 1e9; for (const q of a.pts) for (const s of b.pts) d = Math.min(d, q.distanceTo(s)); return d; };
+    let out = null;
+    for (let tries = 0; tries < 30; tries++) {
+      out = build(); let ok = true;
+      for (let i = 0; i < out.length && ok; i++) for (let j = i + 1; j < out.length; j++) if (gap(out[i], out[j]) < 2 * W.RAVINE_MARGIN + 25) { ok = false; break; }
+      if (ok) break;
+    }
     return out;
-  })();
+  }
+  W.reseed = function (seed) { SEED = seed | 0; W.seed = SEED; W.RAVINES = makeRavines(); };
+  W.reseed((Math.random() * 1e6) | 0);
   // half-width at fraction t along the ravine: alternating narrow (≈3.5 m, jumpable) and wide (≈7.5 m) stretches
-  W.ravineHW = (rv, t) => 1.75 + 2.0 * N.smoothstep(0.42, 0.58, N.vnoise2(t * rv.len / 32, rv.seed, 994));
+  W.ravineHW = (rv, t) => 1.75 + 2.0 * N.smoothstep(0.42, 0.58, vnoise2(t * rv.len / 32, rv.seed, 994));
   const RQ = { d: 0, t: 0, hw: 0, depth: 0, tx: 0, tz: 0, rv: null };
   // nearest ravine info at (x,z), or null when not near any
   W.ravineAt = function (x, z) {
@@ -46,15 +67,15 @@
     if (!best || bd > W.RAVINE_MARGIN) return null;
     const t = RQ.t, taper = N.smoothstep(0, 0.12, t) * N.smoothstep(1, 0.88, t);
     RQ.rv = best; RQ.d = bd; RQ.hw = W.ravineHW(best, t);
-    const dr = bd + (N.vnoise2(x * 0.9, z * 0.9, 995) - 0.5) * 0.5; // rough rock walls
-    RQ.depth = W.RAVINE_DEPTH * taper * (1 - N.smoothstep(0.55 * RQ.hw, RQ.hw, dr)) * (0.85 + 0.3 * N.vnoise2(t * 40, 1, 996));
+    const dr = bd + (vnoise2(x * 0.9, z * 0.9, 995) - 0.5) * 0.5; // rough rock walls
+    RQ.depth = W.RAVINE_DEPTH * taper * (1 - N.smoothstep(0.55 * RQ.hw, RQ.hw, dr)) * (0.85 + 0.3 * vnoise2(t * 40, 1, 996));
     return RQ;
   };
 
   W.height = function (x, z) {
-    let h = (N.fbm2(x / 260 + 10, z / 260 + 10, 101, 4) - 0.5) * 34 + (N.fbm2(x / 70, z / 70, 102, 3) - 0.5) * 7;
+    let h = (fbm2(x / 260 + 10, z / 260 + 10, 101, 4) - 0.5) * 34 + (fbm2(x / 70, z / 70, 102, 3) - 0.5) * 7;
     const e = Math.max(Math.abs(x), Math.abs(z));
-    h += N.smoothstep(380, 490, e) * 70 * (0.6 + 0.8 * N.fbm2(x / 50, z / 50, 103, 2));
+    h += N.smoothstep(380, 490, e) * 70 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
     // gentle basins at start and goal
     for (const p of [W.START, W.GOAL]) { const d = Math.hypot(x - p.x, z - p.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
     const q = W.ravineAt(x, z); if (q) h -= q.depth;
@@ -63,7 +84,7 @@
 
   // How closed the forest is at a spot: 0 in a clearing, 1 under full canopy. Trees, undergrowth and the colour
   // of the ground all follow this one field, so they agree with each other.
-  const canopy = W.canopy = (x, z) => N.smoothstep(0.4, 0.53, N.fbm2(x / 150 + 7, z / 150 + 3, 301, 3));
+  const canopy = W.canopy = (x, z) => N.smoothstep(0.4, 0.53, fbm2(x / 150 + 7, z / 150 + 3, 301, 3));
 
   // A conifer bough: a card running out along a branch (-z from the origin), folded down its middle like a
   // shallow roof so it still has some height seen edge-on, and curving along its length
@@ -162,9 +183,12 @@
     return g;
   }
 
-  W.create = function (renderer) {
-    const scene = new THREE.Scene();
-    const T = DG.T, rnd = N.rng(77);
+  // opts.scene: build into this existing scene (after the previous map was taken out with world.dispose()), so that
+  // everything else living in it (dinosaurs, item lights) stays where it is
+  W.create = function (renderer, opts) {
+    const scene = (opts && opts.scene) || new THREE.Scene();
+    const before = new Set(scene.children);
+    const T = DG.T, rnd = N.rng(77 + SEED);
     // quality profile (set by game.js; a phone gets fewer plants and a smaller shadow map)
     const Q = DG.Q || { veg: 1, fern: 1, shadow: 4096 };
     // ---- sky & lights ----
@@ -176,7 +200,9 @@
     ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG'].forEach(k => sky2.material.uniforms[k].value = su[k].value);
     envScene.add(sky2);
     const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+    const envRT = pmrem.fromScene(envScene, 0.04);
+    scene.environment = envRT.texture;
+    pmrem.dispose(); sky2.geometry.dispose(); sky2.material.dispose();
     scene.add(sky);
     // pale, slightly blue haze: distance washes things out toward the colour of the sky (aerial perspective)
     scene.fog = new THREE.FogExp2(0xb1bfc0, 0.0075);
@@ -194,7 +220,7 @@
     // colour: mossy/dirt variation, rock on steep slopes, darker deep inside ravines
     // (the rock on steep faces comes from the ground shader below, by slope)
     const groundCol = (x, z, h, out) => {
-      const m = N.fbm2(x / 40, z / 40, 104, 3), c = canopy(x, z);
+      const m = fbm2(x / 40, z / 40, 104, 3), c = canopy(x, z);
       const q = W.ravineAt(x, z), deep = q ? q.depth / W.RAVINE_DEPTH : 0;
       // under closed canopy the floor is dim, brown needle litter; clearings are lighter and greener
       const k = (0.82 + 0.26 * m) * (1 - 0.45 * deep) * (1.06 - 0.3 * c);
@@ -385,7 +411,7 @@
 
     // ---- where things grow ----
     const ss = N.smoothstep;
-    const stand = (x, z) => N.fbm2(x / 90, z / 90, 201, 3);                    // which conifer dominates a stand
+    const stand = (x, z) => fbm2(x / 90, z / 90, 201, 3);                    // which conifer dominates a stand
     const edge = (x, z) => { const c = canopy(x, z); return 4 * c * (1 - c); };  // 1 along the margins of clearings
 
     // ---- trees ----
@@ -461,21 +487,21 @@
       const br = []; for (let i = 0; i < 12; i++) br.push({ y: 3.4 + i * 0.32 + rnd() * 0.15, len: 1.7 - i * 0.1, wid: 1.15, tilt: 0.25 - i * 0.07, droop: 0.35, yaw: i * 2.39996 + rnd() * 0.4 });
       const B = batch(tree({ h: 7.2, r0: 0.085, r1: 0.03, flare: 0.25, lean: 0.35, radial: 5, hs: 3, cy: null, branches: br }), treeMats, { shadow: true, far: 170 });
       const pole = { clear: 16, smin: 0.6, smax: 1.15, sy: [0.8, 1.2], tilt: 0.16, maxSlope: 0.6 };
-      place(B, 4200, Object.assign({ dens: (x, z) => canopy(x, z) * ss(0.42, 0.6, N.fbm2(x / 30, z / 30, 213, 2)), clump: { n: 4, r0: 0.5, r: 2.2 } }, pole)); B.build();
+      place(B, 4200, Object.assign({ dens: (x, z) => canopy(x, z) * ss(0.42, 0.6, fbm2(x / 30, z / 30, 213, 2)), clump: { n: 4, r0: 0.5, r: 2.2 } }, pole)); B.build();
     }
 
     // tree fern: fibrous trunk, thicker at the base
     const fParts = [{ geo: trunkGeo(3.2, 0.22, 0.13, 0.25, y => [Math.sin(y * 0.7) * 0.12, 0], 3, 8, 4), group: 0 }];
     crown(14, 2.6, 0.9, 1.6, -0.45, rnd, 3.1).forEach(p => { p.geo.translate(Math.sin(3.1 * 0.7) * 0.12, 0, 0); fParts.push(p); });
     const tfB = batch(merge(fParts), [barkMat, fernMat], { shadow: true, far: 170 });
-    place(tfB, 2800, { clear: 14, dens: (x, z) => ss(0.34, 0.55, N.fbm2(x / 60, z / 60, 202, 3)) * (0.35 + 0.65 * canopy(x, z)), smin: 0.7, smax: 1.5, sy: [0.8, 1.3], tilt: 0.12, collide: 0.25, maxSlope: 0.7, skirt: 2, clump: { n: 2, r0: 1.2, r: 3 } }); tfB.build();
+    place(tfB, 2800, { clear: 14, dens: (x, z) => ss(0.34, 0.55, fbm2(x / 60, z / 60, 202, 3)) * (0.35 + 0.65 * canopy(x, z)), smin: 0.7, smax: 1.5, sy: [0.8, 1.3], tilt: 0.12, collide: 0.25, maxSlope: 0.7, skirt: 2, clump: { n: 2, r0: 1.2, r: 3 } }); tfB.build();
 
     // cycads: a squat barrel trunk with a rosette of stiff fronds; they like the light of clearings and margins
     const cParts = [{ geo: trunkGeo(0.9, 0.3, 0.26, 0.15, null, 5, 10, 3), group: 0 }];
     crown(16, 1.7, 0.42, 0.9, -0.55, rnd, 0.85, 5).forEach(p => cParts.push(p));
     crown(8, 1.1, 0.34, 0.5, -1.15, rnd, 0.9, 4).forEach(p => cParts.push(p));
     const cyB = batch(merge(cParts), [barkMat, cycadLeaf], { far: 130 });
-    place(cyB, 1300, { clear: 10, dens: (x, z) => (1 - 0.75 * canopy(x, z)) * ss(0.4, 0.6, N.fbm2(x / 45, z / 45, 207, 3)), smin: 0.7, smax: 1.5, collide: 0.3, maxSlope: 0.7, skirt: 1, clump: { n: 2, r0: 1, r: 3 } }); cyB.build();
+    place(cyB, 1300, { clear: 10, dens: (x, z) => (1 - 0.75 * canopy(x, z)) * ss(0.4, 0.6, fbm2(x / 45, z / 45, 207, 3)), smin: 0.7, smax: 1.5, collide: 0.3, maxSlope: 0.7, skirt: 1, clump: { n: 2, r0: 1, r: 3 } }); cyB.build();
 
     // dead wood: a good share of the stems in any forest are dead. Broken stumps, splintered snags, and tall
     // bare trunks that still carry a few branches; some of them leaning.
@@ -542,11 +568,11 @@
     // tall ferns: thickets you can hide in (they grow exactly where cover() says there is cover)
     const gParts = crown(11, 1.7, 0.65, 1.1, -1.05, rnd, 0.02, 4);
     const fernB = batch(merge(gParts.map(p => ({ geo: p.geo, group: 0 }))), fernMat, { far: 170 });
-    place(fernB, 44000, { q: Q.fern, clear: 6, dens: (x, z) => N.fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
+    place(fernB, 44000, { q: Q.fern, clear: 6, dens: (x, z) => fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
     // low plants: small ferns and seedlings covering the open floor, thick in clearings where light reaches the
     // ground and thin under closed canopy. Too low to hide in.
     {
-      const dens = (x, z) => (0.3 + 0.7 * ss(0.35, 0.6, N.fbm2(x / 22, z / 22, 220, 2))) * (0.2 + 0.8 * (1 - canopy(x, z)));
+      const dens = (x, z) => (0.3 + 0.7 * ss(0.35, 0.6, fbm2(x / 22, z / 22, 220, 2))) * (0.2 + 0.8 * (1 - canopy(x, z)));
       for (let c = 0, tries = 0; c < 140000 * Q.veg && tries < 1400000; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
         if (rnd() > dens(x, z)) continue;
@@ -558,12 +584,12 @@
     // ---- rocks: two boulder shapes (blocky and slabby) with smaller ones lying round them, and loose stones ----
     const stoneB = batch(rockGeo(1, 5, 4), rockMat, { far: 115 });
     const stone = { clear: 4, smin: 0.1, smax: 0.45, sink: 0.25, tilt: 1.2 };
-    const rockDens = (x, z) => ss(0.44, 0.6, N.fbm2(x / 50, z / 50, 206, 3));
+    const rockDens = (x, z) => ss(0.44, 0.6, fbm2(x / 50, z / 50, 206, 3));
     [[rockGeo(4, 3, 5), 180, 0.6, 3.2, 0.8], [rockGeo(4, 8, 8), 160, 0.5, 2.4, 0.75]].forEach(([g, n, smin, smax, col]) => {
       const B = batch(g, rockMat, { shadow: true, far: 190 });
       place(B, n, { clear: 12, dens: rockDens, smin, smax, sink: 0.25, tilt: 0.45, collide: col, skirt: 2, clump: { n: 5, r0: 1.5, r: 3.5, B: stoneB, o: Object.assign({}, stone, { smax: 0.8 }) } }); B.build();
     });
-    place(stoneB, 2200, Object.assign({ dens: (x, z) => ss(0.4, 0.6, N.fbm2(x / 30, z / 30, 208, 3)) }, stone)); stoneB.build();
+    place(stoneB, 2200, Object.assign({ dens: (x, z) => ss(0.4, 0.6, fbm2(x / 30, z / 30, 208, 3)) }, stone)); stoneB.build();
 
     // ---- drifting motes (dust, pollen, tiny insects) that catch the light: moving specks at different depths
     // are what make the space between the trunks read as air ----
@@ -589,8 +615,31 @@
     const CG = 8, cgrid = new Map(), ckey = (ix, iz) => (ix + 512) * 2048 + iz + 512;
     for (const c of colliders) { const k = ckey(Math.floor(c.x / CG), Math.floor(c.z / CG)); (cgrid.get(k) || cgrid.set(k, []).get(k)).push(c); }
 
+    const owned = scene.children.filter(o => !before.has(o)); // everything this map put into the scene
+    const extraTex = [cliffTex];                                 // textures that only a shader patch refers to
     const world = {
-      scene, sun, sunDir, colliders, terrain, chunks,
+      scene, sun, sunDir, colliders, terrain, chunks, seed: SEED,
+      // take this map out of the scene and free its GPU memory (geometry, materials, textures, environment map)
+      dispose() {
+        const geos = new Set(), mats = new Set(), texs = new Set(extraTex);
+        for (const o of owned) {
+          scene.remove(o);
+          o.traverse(c => {
+            if (c.geometry) geos.add(c.geometry);
+            if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => mats.add(m));
+            if (c.customDepthMaterial) mats.add(c.customDepthMaterial);
+            if (c.isLight && c.dispose) c.dispose(); // frees the sun's shadow map
+            if (c.isInstancedMesh) c.dispose();
+          });
+        }
+        for (const m of mats) {
+          for (const k in m) { const v = m[k]; if (v && v.isTexture) texs.add(v); }
+          if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k].value; if (v && v.isTexture) texs.add(v); }
+        }
+        geos.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); texs.forEach(t => t.dispose());
+        if (scene.environment === envRT.texture) scene.environment = null;
+        envRT.dispose(); scene.fog = null;
+      },
       update(dt, t, focus) {
         wind.value = t;
         sun.position.copy(focus).addScaledVector(sunDir, 175); sun.target.position.copy(focus);
@@ -628,7 +677,7 @@
         }
       },
       // fern density at a point (for hiding)
-      cover(x, z) { return N.fbm2(x / 35, z / 35, 203, 3); }
+      cover(x, z) { return fbm2(x / 35, z / 35, 203, 3); }
     };
     return world;
   };

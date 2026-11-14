@@ -96,7 +96,7 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, world, dinos, P, items, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
+    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -236,10 +236,10 @@
     setSens(SENS);
     $('btnPrev').onclick = () => { A.init(); showDex(dexIdx - 1); };
     $('btnNext').onclick = () => { A.init(); showDex(dexIdx + 1); };
-    $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); startGame(); };
+    $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); beginGame(); };
     $('btnResume').onclick = () => { if (DG.MOBILE) { state = 'play'; $('pause').style.display = 'none'; } else lock(); };
     $('btnQuit').onclick = $('btnTitle').onclick = () => toMenu();
-    $('btnRetry').onclick = () => startGame();
+    $('btnRetry').onclick = () => beginGame();
     addEventListener('keydown', e => {
       keys[e.code] = true; if (e.code === 'KeyC') P.crouch = !P.crouch; if (e.code === 'Space') e.preventDefault();
       if (state === 'play') { const m = /^Digit([1-6])$/.exec(e.code); if (m) items.select(+m[1] - 1); if (e.code === 'KeyF') items.use(); }
@@ -277,6 +277,29 @@
   function msg(t, dur) { $('msg').textContent = t; $('msg').style.opacity = 1; msgT = dur || 3; }
 
   // ---------------- game start ----------------
+  // Every game is played on a fresh map: the one built while loading is used for the first game, and each later
+  // game first replaces it with a newly seeded one (terrain, ravines, trees, rocks…). The scene object stays the
+  // same, so the dinosaurs and item lights in it are untouched.
+  let mapUsed = false, building = false;
+  async function newMap() {
+    $('loading').style.display = ''; setLoad(0.4, '新しい森を生成中'); await frame(); await frame();
+    const scene = world.scene;
+    world.dispose(); W.reseed((Math.random() * 1e6) | 0);
+    world = W.create(renderer, { scene });
+    dinos.forEach(a => { a.d.ground = W.height; });
+    setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
+    renderer.compile(world.scene, camera);
+    setLoad(1, ''); $('loading').style.display = 'none';
+  }
+  async function beginGame() {
+    if (building) return; building = true;
+    try {
+      const fresh = mapUsed; if (fresh) await newMap();
+      mapUsed = true; startGame();
+      // pointer lock needs a recent click; after building a map that may have expired, so wait for one on the pause screen
+      if (fresh && !DG.MOBILE && document.pointerLockElement !== renderer.domElement) { state = 'pause'; $('pause').style.display = 'flex'; }
+    } finally { building = false; }
+  }
   function startGame() {
     ['menu', 'end', 'pause'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block';
     P.pos.set(W.START.x, W.height(W.START.x, W.START.z) + 1.65, W.START.z); P.vel.set(0, 0, 0);
@@ -343,6 +366,13 @@
 
   // ---------------- player ----------------
   const fwd = new V(), right = new V();
+  // terrain gradient at (x, z): {x, z} = rise per metre along each axis, m = steepness (1 = 45°)
+  const MAX_SLOPE = 1.0, SLP = { x: 0, z: 0, m: 0 };
+  function slopeAt(x, z) {
+    const e = 0.3;
+    SLP.x = (W.height(x + e, z) - W.height(x - e, z)) / (2 * e); SLP.z = (W.height(x, z + e) - W.height(x, z - e)) / (2 * e);
+    SLP.m = Math.hypot(SLP.x, SLP.z); return SLP;
+  }
   function updatePlayer(dt) {
     const sprintKey = keys.ShiftLeft || keys.ShiftRight || TI.run;
     let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + TI.mx, mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + TI.mz;
@@ -354,10 +384,14 @@
     P.stam = clamp(P.stam + (sprint ? (adr ? 0 : -0.15) : (moving ? 0.08 : 0.14)) * dt, 0, 1);
     fwd.set(-Math.sin(P.yaw), 0, -Math.cos(P.yaw)); right.set(-fwd.z, 0, fwd.x);
     const wish = fwd.clone().multiplyScalar(mz).addScaledVector(right, mx); if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(spd);
+    // ground steeper than 45° (ravine walls) can't be stood on: no walking up it, no jumping off it, and you slide down
+    const sl = slopeAt(P.pos.x, P.pos.z), steep = P.ground && sl.m > MAX_SLOPE;
+    if (steep) { const ux = sl.x / sl.m, uz = sl.z / sl.m, up = wish.x * ux + wish.z * uz; if (up > 0) { wish.x -= ux * up; wish.z -= uz * up; } }
     const k = 1 - Math.exp(-dt * (P.ground ? 10 : 1.5));
     P.vel.x = lerp(P.vel.x, wish.x, k); P.vel.z = lerp(P.vel.z, wish.z, k);
+    if (steep) { P.vel.x -= sl.x / sl.m * 26 * dt; P.vel.z -= sl.z / sl.m * 26 * dt; }
     P.vel.y -= 22 * dt;
-    if (P.ground && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
+    if (P.ground && !steep && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
     const px = P.pos.x, pz = P.pos.z, g0 = W.height(px, pz);
     P.pos.addScaledVector(P.vel, dt);
     world.collide(P.pos, 0.35, P.pos.y - P.eye); // fallen logs can be jumped over
@@ -367,7 +401,10 @@
     const blocked = (x, z) => {
       const hd = Math.hypot(x - px, z - pz); if (hd < 1e-5) return false;
       const g1 = W.height(x, z);
-      return P.ground ? ((g1 - g0) / hd > 1.0 && g1 > feet + 0.05) : g1 > feet + 0.3;
+      if (!P.ground) return g1 > feet + 0.3;
+      if ((g1 - g0) / hd > 1.0 && g1 > feet + 0.05) return true;
+      // no creeping up a wall in small sideways steps, each of which on its own looks gentle enough
+      return g1 > g0 + 0.005 && slopeAt(x, z).m > MAX_SLOPE;
     };
     if (blocked(P.pos.x, P.pos.z)) { // slide along the wall: keep whichever axis is still allowed
       const nx = P.pos.x, nz = P.pos.z;
