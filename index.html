@@ -83,6 +83,12 @@
   #vsList .dot,#race .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
   #vsStatus{min-height:1.4em;font-size:13px;color:#ffb070}
   #vsGo[disabled]{opacity:.4;cursor:default}
+  #vsDiffBtns{display:flex;gap:6px;flex-wrap:wrap}
+  #vsDiffBtns button{padding:6px 12px;font-size:13px;letter-spacing:.05em}
+  #vsDiffBtns button.on,body.touch #vsDiffBtns button.on{background:#c9a24a;color:#111}
+  #vsDiffBtns button[disabled]{cursor:default}
+  #vsDiffBtns button[disabled]:not(.on){opacity:.45}
+  #vsDiffBtns button[disabled]:not(.on):hover{background:rgba(20,18,12,.7);color:#f2e6c8}
   #race{display:none;z-index:11}
   #race .tbl{position:absolute;right:16px;top:70px;background:rgba(0,0,0,.42);border:1px solid rgba(255,255,255,.15);border-radius:3px;padding:8px 12px;font-size:13px;line-height:1.9;min-width:190px;text-shadow:0 1px 2px #000}
   #race .tbl .t{font-size:11px;color:#c9a24a;letter-spacing:.2em}
@@ -187,7 +193,7 @@
 <div id="vsLobby" class="layer">
   <div class="box">
     <h2>3人対戦</h2>
-    <p class="note">3人がそれぞれ別の地点からスタートし、最初に救難信号へたどり着いた人の勝ち。恐竜に捕まった人は脱落。難易度は「難しい」で固定。</p>
+    <p class="note">3人がそれぞれ別の地点からスタートし、最初に救難信号へたどり着いた人の勝ち。恐竜に捕まった人は脱落。難易度は部屋を作った人が選びます。</p>
     <div id="vsHome">
       <label class="row"><span class="lbl">名前</span><input id="vsName" maxlength="8" placeholder="プレイヤー"></label>
       <div class="row"><button id="vsCreate">部屋を作る</button></div>
@@ -197,6 +203,8 @@
       <div class="row"><span class="lbl">部屋コード</span><b id="vsCodeShow"></b></div>
       <p class="note">このコードを他の2人に伝えて、「部屋に入る」で入力してもらいます。</p>
       <ul id="vsList"></ul>
+      <div class="row"><span class="lbl">難易度</span><span id="vsDiffBtns"></span></div>
+      <p id="vsDiffInfo" class="note"></p>
       <div class="row"><button id="vsGo">対戦開始</button></div>
     </div>
     <p id="vsStatus"></p>

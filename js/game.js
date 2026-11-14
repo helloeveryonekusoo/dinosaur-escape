@@ -684,9 +684,9 @@
   // One player creates a room and is the host: it runs every dinosaur for all three runners and sends the others
   // a snapshot ten times a second. Each player moves their own runner and sends its position to the host.
   // All three build the same map from the seed the host picks, and start from three points the same distance
-  // from the goal. The first to reach the signal wins; anyone caught is out. Difficulty: 難しい.
+  // from the goal. The first to reach the signal wins; anyone caught is out. The host picks the difficulty.
   const VS = {
-    inRoom: false, on: false, host: false, code: '', mySlot: 0, players: [], phase: 'idle', seed: 0,
+    inRoom: false, on: false, host: false, code: '', mySlot: 0, players: [], phase: 'idle', seed: 0, diff: 'hard',
     countT: 0, sendT: 0, panelT: 0, raceT: 0, ready: new Set(), winner: -1, baits: [], dead: null, nRex: 0, spawnIn: 0, raceMap: false, avatars: []
   };
   const VS_COLORS = ['#e8553c', '#3c9be8', '#e8c43c'];
@@ -697,6 +697,14 @@
     tp: { pos: new V(), vis: 1, noise: 0, local: false, slot } });
   const vsList = () => VS.players.filter(Boolean).map(p => ({ s: p.slot, name: p.name }));
   const vsStatus = t => { $('vsStatus').textContent = t || ''; };
+  const vsDiffKey = k => DG.DIFFS[k] ? k : 'hard'; // a difficulty name from the network, checked
+  const VD = () => DG.DIFFS[VS.diff];
+  // the host picks the race's difficulty in the room; everyone else sees the choice
+  function setVsDiff(k) {
+    VS.diff = vsDiffKey(k);
+    if (VS.host) { try { localStorage.setItem('dg_vs_difficulty', VS.diff); } catch (e) { } sendLobby(); }
+    renderLobby();
+  }
   const myName = () => { const n = $('vsName').value.trim().slice(0, 8) || 'プレイヤー'; try { localStorage.setItem('dg_name', n); } catch (e) { } return n; };
 
   function bindVersusUI() {
@@ -707,6 +715,11 @@
     $('vsCode').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') vsJoin(); });
     $('vsName').addEventListener('keydown', e => e.stopPropagation());
     ['keyup'].forEach(t => { $('vsCode').addEventListener(t, e => e.stopPropagation()); $('vsName').addEventListener(t, e => e.stopPropagation()); });
+    DG.DIFF_ORDER.forEach(k => {
+      const b = document.createElement('button'); b.textContent = DG.DIFFS[k].name; b.dataset.k = k;
+      b.onclick = () => { if (VS.host && VS.phase === 'lobby') setVsDiff(k); };
+      $('vsDiffBtns').appendChild(b);
+    });
     $('vsGo').onclick = vsStartRace;
     $('vsBack').onclick = vsLeaveRoom;
     DG.Net.on(onNet);
@@ -722,6 +735,10 @@
       const p = VS.players[s];
       return `<li><span class="dot" style="background:${VS_COLORS[s]}"></span>${p ? esc(p.name) + (s === VS.mySlot ? '（あなた）' : '') + (s === 0 ? ' — ホスト' : '') : '<span style="color:#777">空き</span>'}</li>`;
     }).join('');
+    const df = VD();
+    document.querySelectorAll('#vsDiffBtns button').forEach(b => { b.classList.toggle('on', b.dataset.k === VS.diff); b.disabled = !VS.host; });
+    $('vsDiffInfo').textContent = `ティラノ：最初 ${df.count}頭 → ${df.spawnEvery}秒ごとに1頭増えて最大 ${df.max}頭 ／ 走る速さ 約${Math.round(DG.SPECIES.trex.ai.run * df.speed * 3.6)}km/h ／ ` +
+      `目と耳の届く距離 ${Math.round(df.sense * 100)}% ／ 最初の発煙筒 ${df.startFlare}本` + (VS.host ? '' : '（難易度はホストが選びます）');
     const n = VS.players.filter(Boolean).length;
     $('vsGo').style.display = VS.host ? '' : 'none';
     $('vsGo').disabled = n < 2;
@@ -733,7 +750,8 @@
     vsStatus('部屋を作っています…');
     try {
       const code = await DG.Net.host();
-      Object.assign(VS, { inRoom: true, host: true, code, mySlot: 0, players: [mkPlayer(0, null, myName())], phase: 'lobby' });
+      let d = 'hard'; try { d = vsDiffKey(localStorage.getItem('dg_vs_difficulty')); } catch (e) { }
+      Object.assign(VS, { inRoom: true, host: true, code, mySlot: 0, players: [mkPlayer(0, null, myName())], phase: 'lobby', diff: d });
       openLobby();
     } catch (e) { DG.Net.close(); vsStatus(DG.Net.why(e)); }
   }
@@ -785,7 +803,7 @@
     else { p.left = true; if (p.st === 'alive') { p.st = 'gone'; p.dist = goalDist(p.tp.pos); } VS.ready.add(p.slot); vsMaybeGo(); vsCheckEnd(); }
   }
   function sendLobby() {
-    VS.players.forEach(p => { if (p && p.id) DG.Net.send({ t: 'lobby', you: p.slot, code: VS.code, list: vsList() }, p.id); });
+    VS.players.forEach(p => { if (p && p.id) DG.Net.send({ t: 'lobby', you: p.slot, code: VS.code, list: vsList(), diff: VS.diff }, p.id); });
   }
   function hostMsg(id, m) {
     const p = playerById(id);
@@ -814,12 +832,12 @@
     if (m.t === 'busy') { vsAbort(m.why || '部屋に入れませんでした'); return; }
     if (m.t === 'lobby') {
       const was = VS.inRoom;
-      VS.inRoom = true; VS.mySlot = m.you | 0; VS.code = m.code || VS.code;
+      VS.inRoom = true; VS.mySlot = m.you | 0; VS.code = m.code || VS.code; VS.diff = vsDiffKey(m.diff);
       const old = VS.players; VS.players = [];
       (m.list || []).forEach(e => { VS.players[e.s] = mkPlayer(e.s, null, e.name); if (old[e.s]) VS.players[e.s].st = old[e.s].st; });
       if (VS.phase === 'idle') VS.phase = 'lobby';
       if (!was || $('vsLobby').style.display === 'flex') openLobby(); else renderLobby();
-    } else if (m.t === 'start') vsPrepare(m.seed | 0, m.list || []);
+    } else if (m.t === 'start') { VS.diff = vsDiffKey(m.diff); vsPrepare(m.seed | 0, m.list || []); }
     else if (m.t === 'go') { if (VS.phase === 'loading') VS.goPending = true; else vsGo(); }
     else if (m.t === 'snap') applySnap(m);
     else if (m.t === 'caught') { const me = VS.players[VS.mySlot]; if (me && me.st === 'alive') { me.st = 'dead'; me.dist = goalDist(P.pos); localCaught(TREX()[m.k | 0]); } }
@@ -832,7 +850,7 @@
   async function vsStartRace() {
     if (!VS.host || VS.phase === 'loading' || VS.players.filter(Boolean).length < 2) return;
     VS.seed = (Math.random() * 1e6) | 0;
-    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList() });
+    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList(), diff: VS.diff });
     VS.ready = new Set();
     VS.players.forEach(p => { if (p && !playerConnected(p)) VS.ready.add(p.slot); });
     await vsPrepare(VS.seed, vsList());
@@ -869,7 +887,7 @@
     if (VS.phase !== 'ready') return;
     $('loading').style.display = 'none';
     VS.on = true; VS.phase = 'count'; VS.countT = 3.5;
-    DF = DG.DIFFS.hard;
+    DF = VD();
     ['menu', 'end', 'pause', 'vsLobby'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block'; $('race').style.display = 'block';
     const st = W.STARTS[VS.mySlot] || W.START;
     P.pos.set(st.x, W.height(st.x, st.z) + 1.65, st.z); P.vel.set(0, 0, 0); P.eye = 1.65; P.ground = true;
@@ -1041,7 +1059,7 @@
     const wp = VS.players[w];
     $('endTitle').textContent = w >= 0 && wp ? (w === VS.mySlot ? '🏆 あなたの勝ち！' : `🏆 ${wp.name} の勝ち`) : '全員脱落';
     $('endTitle').style.color = w === VS.mySlot ? '#c9e6a0' : w >= 0 ? '#ffe2a0' : '#e05a40';
-    $('endText').textContent = `3人対戦（難易度：難しい）　レース時間 ${VS.raceT.toFixed(1)} 秒`;
+    $('endText').textContent = `3人対戦（難易度：${VD().name}）　レース時間 ${VS.raceT.toFixed(1)} 秒`;
     const tag = ['走行中', '脱落', 'ゴール', '切断'];
     $('endRank').innerHTML = r.map((e, i) => {
       const p = VS.players[e[0]]; if (!p) return '';
@@ -1115,7 +1133,7 @@
     ['inv', 'stam', 'cross', 'status'].forEach(id => $(id).style.visibility = myAlive ? '' : 'hidden'); // nothing to hold while watching
     $('dist').textContent = myAlive ? Math.round(gd) : '—';
     const n = VS.host ? roster.filter(a => a.d.root.visible).length : VS.nRex, sp = VS.host ? (SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1) : VS.spawnIn;
-    $('rexn').textContent = `🦖×${n}` + (sp > 0 ? `（次の出現まで ${sp}秒）` : '') + '　【難しい・3人対戦】';
+    $('rexn').textContent = `🦖×${n}` + (sp > 0 ? `（次の出現まで ${sp}秒）` : '') + `　【${VD().name}・3人対戦】`;
     // compass: north/south…, the signal, and the other runners
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls, style) => { const r = wrapA(ang - P.yaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
