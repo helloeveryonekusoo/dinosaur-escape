@@ -14,37 +14,64 @@
   const vnoise2 = (x, y, s) => N.vnoise2(x, y, s + SEED);
 
   W.RAVINE_DEPTH = 5; W.RAVINE_MARGIN = 9; // margin = half-width of the detailed mesh strip
-  // versus: the 3-player race. Its three starts are spread across the south, all the same distance from the goal,
-  // and its ravines are longer and straighter so that every route has to cross each of them.
+  // Many short ravines (90-150 m) scattered between the start and the goal, roughly across the way, so they have to
+  // be jumped at a narrow spot or walked round. In the 3-player race (versus) every start's straight line to the goal
+  // must cross the same number of them, so no runner gets an easier route.
+  const RAVINE_N = 7, RAVINE_N_VS = 9, RAVINE_GAP = 2 * 9 + 27; // centre lines at least this far apart (strips never meet)
   function makeRavines(versus) {
     const rr = N.rng(991 + SEED);
     const r = new V().subVectors(W.GOAL, W.START).normalize(), p = new V(-r.z, 0, r.x);
+    const mk = (c, ang, L, k) => {
+      const dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x), n = 12, pts = [];
+      for (let i = 0; i < n; i++) {
+        const s = (i / (n - 1) - 0.5) * L, w = (vnoise2(i * 0.6, k * 7.3, 992) - 0.5) * 10;
+        pts.push(c.clone().addScaledVector(dir, s).addScaledVector(side, w));
+      }
+      const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+      const xs = pts.map(q => q.x), zs = pts.map(q => q.z), m = W.RAVINE_MARGIN + 2;
+      return { pts, cum, len: cum[n - 1], seed: 993 + k, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] };
+    };
+    // distance from a point to a ravine's centre line
+    const segD = (q, a, b) => { const ex = b.x - a.x, ez = b.z - a.z, l2 = ex * ex + ez * ez || 1, u = Math.max(0, Math.min(1, ((q.x - a.x) * ex + (q.z - a.z) * ez) / l2)); return Math.hypot(q.x - a.x - ex * u, q.z - a.z - ez * u); };
+    const lineD = (q, rv) => { let d = 1e9; for (let i = 0; i < rv.pts.length - 1; i++) d = Math.min(d, segD(q, rv.pts[i], rv.pts[i + 1])); return d; };
+    const gapOK = (rv, list) => list.every(o => rv.pts.every(q => lineD(q, o) >= RAVINE_GAP) && o.pts.every(q => lineD(q, rv) >= RAVINE_GAP));
+    const clearOfEnds = rv => rv.pts.every(q => [...W.STARTS, W.GOAL].every(s => Math.hypot(q.x - s.x, q.z - s.z) > 55));
+    // does the straight line a -> b cut through the deep part of this ravine (its tapered ends don't count)?
+    const cross = (a, b, rv) => {
+      const P = rv.pts, n = P.length;
+      for (let i = 1; i < n - 2; i++) {
+        const c = P[i], d = P[i + 1];
+        const den = (b.x - a.x) * (d.z - c.z) - (b.z - a.z) * (d.x - c.x); if (Math.abs(den) < 1e-9) continue;
+        const t = ((c.x - a.x) * (d.z - c.z) - (c.z - a.z) * (d.x - c.x)) / den, u = ((c.x - a.x) * (b.z - a.z) - (c.z - a.z) * (b.x - a.x)) / den;
+        if (t > 0 && t < 1 && u >= 0 && u <= 1) return true;
+      }
+      return false;
+    };
+    const crossings = list => W.STARTS.map(s => list.filter(rv => cross(s, W.GOAL, rv)).length);
     const build = () => {
-      const out = [];
-      [0.24, 0.47, 0.68, 0.87].forEach((f0, k) => {
-        const f = f0 + (rr() - 0.5) * 0.07; // where along the route it crosses
-        const c = W.START.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * (versus ? 30 : 90));
-        const ang = Math.atan2(p.x, p.z) + (rr() - 0.5) * (versus ? 0.3 : 0.6), dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x);
-        const L = versus ? 400 + rr() * 40 : 160 + rr() * 100, n = versus ? 16 : 12, pts = [];
-        for (let i = 0; i < n; i++) {
-          const s = (i / (n - 1) - 0.5) * L, w = (vnoise2(i * 0.6, k * 7.3, 992) - 0.5) * 16;
-          pts.push(c.clone().addScaledVector(dir, s).addScaledVector(side, w));
+      const out = [], want = versus ? RAVINE_N_VS : RAVINE_N;
+      for (let k = 0; k < want; k++) {
+        const f0 = 0.14 + 0.76 * (k + 0.5) / want; // spread from near the start to near the goal
+        for (let tries = 0; tries < 25; tries++) {
+          const s = versus ? W.STARTS[Math.floor(rr() * W.STARTS.length)] : W.START; // in a race: across one of the routes
+          const f = f0 + (rr() - 0.5) * 0.08;
+          const c = s.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * (versus ? 60 : 120));
+          const rv = mk(c, Math.atan2(p.x, p.z) + (rr() - 0.5) * 0.9, 90 + rr() * 60, out.length);
+          if (clearOfEnds(rv) && gapOK(rv, out)) { out.push(rv); break; }
         }
-        const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
-        const xs = pts.map(q => q.x), zs = pts.map(q => q.z), m = W.RAVINE_MARGIN + 2;
-        out.push({ pts, cum, len: cum[n - 1], seed: 993 + k, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] });
-      });
+      }
       return out;
     };
-    // two ravines must never meet: their mesh strips would overlap. Draw again until every pair is well apart.
-    const gap = (a, b) => { let d = 1e9; for (const q of a.pts) for (const s of b.pts) d = Math.min(d, q.distanceTo(s)); return d; };
-    let out = null;
-    for (let tries = 0; tries < 30; tries++) {
-      out = build(); let ok = true;
-      for (let i = 0; i < out.length && ok; i++) for (let j = i + 1; j < out.length; j++) if (gap(out[i], out[j]) < 2 * W.RAVINE_MARGIN + 25) { ok = false; break; }
-      if (ok) break;
+    // keep the layout whose routes are crossed most evenly (and, in single play, crossed at least three times)
+    let best = null, bestScore = -1e9;
+    for (let tries = 0; tries < (versus ? 150 : 20); tries++) {
+      const out = build(), cr = crossings(out), lo = Math.min(...cr), hi = Math.max(...cr);
+      const score = -(hi - lo) * 100 + Math.min(lo, 4) * 10 + out.length;
+      if (score > bestScore) { bestScore = score; best = out; }
+      if (hi === lo && lo >= 3 && out.length >= (versus ? RAVINE_N_VS : RAVINE_N) - 1) break;
     }
-    return out;
+    W.RAVINE_CROSSINGS = crossings(best);
+    return best;
   }
   // the three starts of a race: the single-player start turned about the goal by -16°, 0 and +16°
   const raceStarts = () => [-16, 0, 16].map(deg => {
