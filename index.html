@@ -34,6 +34,11 @@
   #diffBtns button{padding:7px 16px;font-size:13px}
   #diffBtns button.on{background:#c9a24a;color:#111}
   #diffInfo{font-size:12px;color:#cfc6ad;margin-top:10px;line-height:1.8;max-width:640px}
+  .sens{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .sens .lbl{font-size:12px;color:#c9a24a;letter-spacing:.3em}
+  .sens input{pointer-events:auto;width:200px;accent-color:#c9a24a;cursor:pointer;margin:0}
+  .sens b{font-size:13px;font-weight:400;color:#f2e6c8;min-width:3.2em}
+  #pause .sens{margin:6px 0 22px}
   #hud{display:none;z-index:10}
   #stam{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);width:260px;height:5px;background:rgba(255,255,255,.15);border-radius:3px}
   #stam i{display:block;height:100%;width:100%;background:#e8e2cf;border-radius:3px}
@@ -97,7 +102,7 @@
     #menu{padding:10px calc(4vw + env(safe-area-inset-right)) 12px calc(4vw + env(safe-area-inset-left));justify-content:center}
     #dexInfo{min-height:0;margin-top:6px;max-width:none} #dexInfo .nm{font-size:16px;display:inline} #dexInfo .sci{display:inline;font-size:12px;margin:0 0 0 8px} #dexInfo .ds,#dexInfo .st{display:none}
     #diff{margin-top:8px;gap:8px} #diffBtns{gap:6px} #diffBtns button{padding:7px 11px;font-size:12px;letter-spacing:.05em}
-    #diffInfo{font-size:11px;line-height:1.5;margin-top:6px} #menu .btns{margin-top:8px} #menu .btns button{padding:9px 22px;font-size:14px}
+    #diffInfo{font-size:11px;line-height:1.5;margin-top:6px} .sens{margin-top:6px} .sens input{width:160px} #pause .sens{margin:0 0 12px} #menu .btns{margin-top:8px} #menu .btns button{padding:9px 22px;font-size:14px}
     body.touch #helpTouch{font-size:11px;line-height:1.5;margin-top:8px}
     #credits{font-size:11px;right:10px;bottom:4px;max-width:60vw;line-height:1.3}
     #end h2{font-size:30px} #end p{font-size:13px;margin:8px 12px;text-align:center} #end button,#pause button{padding:9px 22px}
@@ -116,6 +121,7 @@
   <div id="dexInfo"></div>
   <div id="diff"><span class="lbl">難易度</span><span id="diffBtns"></span></div>
   <div id="diffInfo"></div>
+  <div class="sens"><span class="lbl sensLbl">マウス感度</span><input class="sensIn" type="range" min="0.2" max="3" step="0.1" aria-label="感度"><b class="sensVal"></b></div>
   <div class="btns">
     <button id="btnPrev">◀</button><button id="btnNext">▶</button>
     <button id="btnStart">ゲーム開始</button>
@@ -145,7 +151,9 @@
   <button id="tRun">走る</button><button id="tJump">跳ぶ</button><button id="tCrouch">しゃ<br>がむ</button><button id="tUse">使う</button><button id="tPause">Ⅱ</button>
 </div>
 <div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
-<div id="pause" class="layer"><h2>PAUSE</h2><button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
+<div id="pause" class="layer"><h2>PAUSE</h2>
+  <div class="sens"><span class="lbl sensLbl">マウス感度</span><input class="sensIn" type="range" min="0.2" max="3" step="0.1" aria-label="感度"><b class="sensVal"></b></div>
+  <button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
 <div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
 
 <script type="importmap">

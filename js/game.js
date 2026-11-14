@@ -30,6 +30,14 @@
   let diffKey = 'easy';
   try { const k = localStorage.getItem('dg_difficulty'); if (DG.DIFFS[k]) diffKey = k; } catch (e) { }
   let DF = DG.DIFFS[diffKey];
+  // look sensitivity (mouse, or finger drag on touch screens): a multiplier on the turn per pixel, saved per browser
+  let SENS = 1;
+  try { const v = parseFloat(localStorage.getItem('dg_sens')); if (v >= 0.2 && v <= 3) SENS = v; } catch (e) { }
+  function setSens(v) {
+    SENS = clamp(Math.round(v * 10) / 10, 0.2, 3); try { localStorage.setItem('dg_sens', SENS); } catch (e) { }
+    document.querySelectorAll('.sensIn').forEach(i => { if (+i.value !== SENS) i.value = SENS; });
+    document.querySelectorAll('.sensVal').forEach(b => b.textContent = SENS.toFixed(1) + '×');
+  }
   function setDiff(k) {
     diffKey = k; DF = DG.DIFFS[k]; try { localStorage.setItem('dg_difficulty', k); } catch (e) { }
     document.querySelectorAll('#diffBtns button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
@@ -184,7 +192,8 @@
     cv.addEventListener('pointerdown', e => { if (lid !== null || state !== 'play') return; lid = e.pointerId; try { cv.setPointerCapture(lid); } catch (er) { } lx = e.clientX; ly = e.clientY; });
     cv.addEventListener('pointermove', e => {
       if (e.pointerId !== lid || state !== 'play') return;
-      P.yaw -= (e.clientX - lx) * 0.0055; P.pitch = clamp(P.pitch - (e.clientY - ly) * 0.0055, -1.45, 1.45); lx = e.clientX; ly = e.clientY;
+      const k = 0.0055 * SENS;
+      P.yaw -= (e.clientX - lx) * k; P.pitch = clamp(P.pitch - (e.clientY - ly) * k, -1.45, 1.45); lx = e.clientX; ly = e.clientY;
     });
     const lookEnd = e => { if (e.pointerId === lid) lid = null; };
     cv.addEventListener('pointerup', lookEnd); cv.addEventListener('pointercancel', lookEnd);
@@ -219,6 +228,12 @@
       $('diffBtns').appendChild(b);
     });
     setDiff(diffKey);
+    document.querySelectorAll('.sensLbl').forEach(l => l.textContent = DG.MOBILE ? '視点感度' : 'マウス感度');
+    document.querySelectorAll('.sensIn').forEach(i => {
+      i.addEventListener('input', () => setSens(+i.value));
+      ['keydown', 'keyup'].forEach(t => i.addEventListener(t, e => e.stopPropagation())); // arrow keys move the slider, not the player
+    });
+    setSens(SENS);
     $('btnPrev').onclick = () => { A.init(); showDex(dexIdx - 1); };
     $('btnNext').onclick = () => { A.init(); showDex(dexIdx + 1); };
     $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); startGame(); };
@@ -234,7 +249,8 @@
     addEventListener('keyup', e => keys[e.code] = false);
     addEventListener('mousemove', e => {
       if (state !== 'play' || document.pointerLockElement !== renderer.domElement) return;
-      P.yaw -= e.movementX * 0.0022; P.pitch = clamp(P.pitch - e.movementY * 0.0022, -1.45, 1.45);
+      const k = 0.0022 * SENS;
+      P.yaw -= e.movementX * k; P.pitch = clamp(P.pitch - e.movementY * k, -1.45, 1.45);
     });
     renderer.domElement.addEventListener('click', () => { if (state === 'play' && document.pointerLockElement !== renderer.domElement) lock(); });
     document.addEventListener('pointerlockchange', () => {
