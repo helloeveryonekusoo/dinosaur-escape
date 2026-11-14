@@ -90,18 +90,23 @@
       S.pickups = []; S.proj = []; S.baits = []; S.flares = [];
     }
     // df: the difficulty level ({items, startFlare, flareTime}); omitted = the original, easy values
-    S.reset = function (df) {
+    // opt.seed: lay the pickups out from this seed (a race: every player gets the same layout);
+    // opt.starts: spread them along the routes from each of these starts in turn (a race has three)
+    S.reset = function (df, opt) {
       clear();
-      df = df || { items: 1, startFlare: 1, flareTime: 20 };
+      df = df || { items: 1, startFlare: 1, flareTime: 20 }; opt = opt || {};
       FLARE_TIME = df.flareTime; TYPES.flare.desc = flareDesc();
       S.inv = { flare: df.startFlare, meat: 0, dart: 0, camo: 0, adren: 0, radar: 0 }; S.sel = 0; S.adren = 0; S.radar = 0; S.camo = 0;
-      const rnd = DG.N.rng((Math.random() * 1e9) | 0);
+      const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START];
+      let all = 0;
       ORDER.forEach(type => {
-        const n = countOf(type, df.items);
+        const n = countOf(type, df.items) * starts.length;
         for (let i = 0; i < n; i++) {
           // spread along the route to the goal, with some off to the sides
-          const f = 0.06 + 0.9 * (i + rnd()) / n, side = (rnd() - 0.5) * (rnd() < 0.3 ? 220 : 90);
-          let x = THREE.MathUtils.lerp(W.START.x, W.GOAL.x, f) + side, z = THREE.MathUtils.lerp(W.START.z, W.GOAL.z, f) + (rnd() - 0.5) * 30;
+          const st = starts[all++ % starts.length], ni = Math.floor(i / starts.length), nn = n / starts.length;
+          const f = 0.06 + 0.9 * (ni + rnd()) / nn, side = (rnd() - 0.5) * (rnd() < 0.3 ? (starts.length > 1 ? 120 : 220) : 90);
+          const rx = W.GOAL.x - st.x, rz = W.GOAL.z - st.z, rl = Math.hypot(rx, rz) || 1;
+          let x = THREE.MathUtils.lerp(st.x, W.GOAL.x, f) - rz / rl * side, z = THREE.MathUtils.lerp(st.z, W.GOAL.z, f) + rx / rl * side + (rnd() - 0.5) * 30;
           for (let k = 0; k < 20; k++) { const q = W.ravineAt(x, z); if (!q || q.depth < 0.2) break; x += 6; } // not inside a ravine
           for (const c of (W.colliders || [])) { // not inside a trunk, boulder or log, where it couldn't be reached
             const dx = x - c.x, dz = z - c.z, d = Math.hypot(dx, dz), m = c.r + 0.7;

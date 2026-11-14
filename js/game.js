@@ -96,7 +96,7 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
+    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, TREX, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -126,24 +126,37 @@
   };
 
   function mkAI(d) {
-    return { d, s: d.spec, ai: d.spec.ai, pos: new V(), heading: 0, speed: 0, turnRate: 0, state: 'wander', aware: 0, timer: 0,
-      target: new V(), lastSeen: new V(), home: new V(), lost: 0, roared: false, attackT: -1, lastPhase: 0, chargeDir: 0, flank: (Math.random() - 0.5) * 2 };
+    const a = { d, s: d.spec, ai: d.spec.ai, pos: new V(), heading: 0, speed: 0, turnRate: 0, state: 'wander', aware: 0, timer: 0,
+      target: new V(), lastSeen: new V(), home: new V(), lost: 0, roared: false, attackT: -1, lastPhase: 0, chargeDir: 0, flank: (Math.random() - 0.5) * 2,
+      roarN: 0, biteN: 0 };
+    // count roars, so a race host can tell the other players' screens to play them too
+    const roar0 = d.roar.bind(d); d.roar = dur => { a.roarN++; return roar0(dur); };
+    return a;
   }
+  const TREX = () => dinos.filter(a => a.s.key === 'trex'); // the race uses T-rexes only (every player has the same set)
 
   // A burning flare (light + noise) or meat (smell) draws nearby dinosaurs to a spot.
   // Both work even on a dinosaur that is chasing the player, unless the player is very close to it.
   DG.lure = function (pos, kind, src) {
-    if (state !== 'play') return;
+    if (VS.on && !VS.host) { // a race guest: the host runs the dinosaurs, so tell it where the flare or meat landed
+      DG.Net.send({ t: 'lure', kind, x: pos.x, y: pos.y, z: pos.z }); return;
+    }
+    if (state !== 'play' && !VS.on) return;
+    const n = lureAt(pos, kind, src);
+    if (n) msg(lureText(kind), 2.2);
+  };
+  const lureText = kind => kind === 'meat' ? `🍖 ${hunterName()}が肉の匂いに気付いた` : `🎇 ${hunterName()}が発煙筒の光に引き寄せられた`;
+  function lureAt(pos, kind, src) {
     const R = kind === 'meat' ? 120 : 100, close = kind === 'meat' ? 18 : 12; let n = 0;
     dinos.forEach(a => {
-      if (!a.d.root.visible || a.state === 'eat' || a.state === 'fixate' || a.pos.distanceTo(pos) > R) return;
+      if (!a.d.root.visible || a.feedT > 0 || a.state === 'eat' || a.state === 'fixate' || a.pos.distanceTo(pos) > R) return;
       const seesPlayer = (a.state === 'chase' || a.state === 'alert') && a.lost < 1.5;
-      if (seesPlayer && a.pos.distanceTo(P.pos) < close) return;
+      if (seesPlayer && a.pos.distanceTo((a.tgtP || LOCAL).pos) < close) return;
       a.state = 'investigate'; a.lureKind = kind; a.target.copy(pos); a.arrived = false; a.roarHold = 0;
       a.timer = 45; a.bait = src || null; a.aware = Math.min(a.aware, 0.3); n++;
     });
-    if (n) msg(kind === 'meat' ? `🍖 ${hunterName()}が肉の匂いに気付いた` : `🎇 ${hunterName()}が発煙筒の光に引き寄せられた`, 2.2);
-  };
+    return n;
+  }
 
   // Tranquilizer dart: a ray from the eye along the aim; the body is approximated by a few spheres.
   DG.dartShot = function () {
@@ -160,12 +173,16 @@
       }
     });
     if (!best) return false;
-    const a = best;
-    a.tranq = 25; a.aware = Math.max(a.aware, 1.2); a.lastSeen.copy(P.pos); a.lost = 0;
-    if (a.state !== 'chase') { a.state = 'alert'; a.timer = 0.5; }
-    a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.15, 1.3, 2.0);
+    if (VS.on && !VS.host) { DG.Net.send({ t: 'dart', k: TREX().indexOf(best) }); return true; } // the host applies it
+    tranq(best, LOCAL);
     return true;
   };
+  // a dart hit: slows the dinosaur, which turns on whoever shot it
+  function tranq(a, shooter) {
+    a.tranq = 25; a.aware = Math.max(a.aware, 1.2); a.lastSeen.copy(shooter.pos); a.lost = 0; a.tgtP = shooter;
+    if (a.state !== 'chase') { a.state = 'alert'; a.timer = 0.5; }
+    a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.15, 1.3, 2.0);
+  }
 
   // ---------------- UI ----------------
   const lock = () => { if (DG.MOBILE) return; try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { } };
@@ -238,8 +255,10 @@
     $('btnNext').onclick = () => { A.init(); showDex(dexIdx + 1); };
     $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); beginGame(); };
     $('btnResume').onclick = () => { if (DG.MOBILE) { state = 'play'; $('pause').style.display = 'none'; } else lock(); };
-    $('btnQuit').onclick = $('btnTitle').onclick = () => toMenu();
-    $('btnRetry').onclick = () => beginGame();
+    $('btnRetry').onclick = () => { if (VS.inRoom) vsToLobby(); else beginGame(); };
+    $('btnTitle').onclick = () => { if (VS.inRoom) vsLeaveRoom(); else toMenu(); };
+    $('btnQuit').onclick = () => { if (VS.inRoom) vsLeaveRoom(); else toMenu(); };
+    bindVersusUI();
     addEventListener('keydown', e => {
       keys[e.code] = true; if (e.code === 'KeyC') P.crouch = !P.crouch; if (e.code === 'Space') e.preventDefault();
       if (state === 'play') { const m = /^Digit([1-6])$/.exec(e.code); if (m) items.select(+m[1] - 1); if (e.code === 'KeyF') items.use(); }
@@ -271,6 +290,7 @@
   }
   function toMenu() {
     state = 'menu'; if (document.pointerLockElement) document.exitPointerLock();
+    ['inv', 'stam', 'cross', 'status'].forEach(id => $(id).style.visibility = '');
     ['hud', 'end', 'pause'].forEach(id => $(id).style.display = 'none'); $('menu').style.display = 'flex';
     showDex(dexIdx);
   }
@@ -376,6 +396,8 @@
   function updatePlayer(dt) {
     const sprintKey = keys.ShiftLeft || keys.ShiftRight || TI.run;
     let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + TI.mx, mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + TI.mz;
+    const held = VS.on && VS.phase !== 'race'; // a race countdown: look around, but no moving yet
+    if (held) mx = mz = 0;
     const moving = mx || mz;
     const adr = items.adren > 0;
     if (P.stam <= 0) P.exhausted = true; if (P.exhausted && (P.stam > 0.35 || adr)) P.exhausted = false;
@@ -391,7 +413,7 @@
     P.vel.x = lerp(P.vel.x, wish.x, k); P.vel.z = lerp(P.vel.z, wish.z, k);
     if (steep) { P.vel.x -= sl.x / sl.m * 26 * dt; P.vel.z -= sl.z / sl.m * 26 * dt; }
     P.vel.y -= 22 * dt;
-    if (P.ground && !steep && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
+    if (P.ground && !steep && !held && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
     const px = P.pos.x, pz = P.pos.z, g0 = W.height(px, pz);
     P.pos.addScaledVector(P.vel, dt);
     world.collide(P.pos, 0.35, P.pos.y - P.eye); // fallen logs can be jumped over
@@ -436,43 +458,78 @@
 
   // ---------------- dinosaur AI ----------------
   const tv = new V();
-  function updateDino(a, dt, playing) {
+  // Whom a dinosaur is after. In a single game that is always the player (LOCAL). In a race the host runs every
+  // dinosaur for all three runners: it keeps after the runner it is already hunting, otherwise turns to the one it
+  // notices most at this moment, otherwise to the nearest.
+  const LOCAL = { pos: P.pos, get vis() { return P.vis; }, get noise() { return P.noise; }, local: true, slot: 0 };
+  function senseGain(a, tp) {
+    const ai = a.ai, dx = tp.pos.x - a.pos.x, dz = tp.pos.z - a.pos.z, dist = Math.hypot(dx, dz), rel = Math.abs(wrapA(Math.atan2(dx, dz) - a.heading));
+    let gain = 0;
+    const flareLured = (a.state === 'investigate' && a.lureKind === 'flare') || a.state === 'fixate'; // its hiss drowns out footsteps
+    const sr = ai.sight * DF.sense * tp.vis; if (dist < sr && rel < 1.7) gain += (1.6 * (1 - dist / sr) + 0.2) * (flareLured ? 0.12 : 1); // eyes on the light
+    const hr = ai.hear * DF.sense * tp.noise; if (dist < hr && !flareLured) gain += 2.2 * (1 - dist / hr) + 0.2;
+    if (a.state === 'eat') gain *= 0.35; // busy eating: much less attentive
+    if (dist < 6 * ai.size + 3) gain += 1.5; // right next to it: always noticed
+    return gain;
+  }
+  function pickTarget(a, list) {
+    if (!list) return LOCAL;
+    if (!list.length) return null;
+    const busy = a.state === 'alert' || a.state === 'chase' || a.state === 'charge' || a.state === 'cool';
+    if (busy && a.tgtP && list.includes(a.tgtP)) return a.tgtP;
+    let best = null, bg = 0, near = null, nd = 1e9;
+    for (const tp of list) {
+      const g = senseGain(a, tp); if (g > bg) { bg = g; best = tp; }
+      const d = Math.hypot(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z); if (d < nd) { nd = d; near = tp; }
+    }
+    return best || (a.tgtP && list.includes(a.tgtP) ? a.tgtP : near);
+  }
+  // a message meant for one runner (in a race, someone else's dinosaur trouble is not shown on your screen)
+  function tell(tp, text, dur) {
+    if (!tp || tp.local) { msg(text, dur); return; }
+    const p = VS.players[tp.slot]; if (p && p.id) DG.Net.send({ t: 'tell', m: text, d: dur }, p.id);
+  }
+  // list: the runners a race host simulates for (undefined in a single game)
+  function updateDino(a, dt, playing, list) {
     const ai = a.ai, d = a.d;
+    if (a.feedT > 0) { // just caught a runner in a race: stands over its catch for a while
+      a.feedT -= dt; a.speed = lerp(a.speed, 0, 1 - Math.exp(-dt * 6)); a.turnRate = 0; a.attackT = -1;
+      d.lunge = Math.max(0, d.lunge - dt); applyDino(a, dt); return;
+    }
+    let TP = pickTarget(a, list);
+    if (!TP) { TP = LOCAL; playing = false; }
+    a.tgtP = TP;
+    const lookAt = TP.local ? camera.position : TP.pos;
     let desiredSpeed = 0, desiredHeading = a.heading;
-    const toP = tv.copy(P.pos).sub(a.pos); toP.y = 0; const dist = toP.length();
+    const toP = tv.copy(TP.pos).sub(a.pos); toP.y = 0; const dist = toP.length();
     const angP = Math.atan2(toP.x, toP.z), rel = Math.abs(wrapA(angP - a.heading));
     a.timer -= dt;
     if (playing) {
       // perception
-      let gain = 0;
-      const flareLured = (a.state === 'investigate' && a.lureKind === 'flare') || a.state === 'fixate'; // its hiss drowns out footsteps
-      const sr = ai.sight * DF.sense * P.vis; if (dist < sr && rel < 1.7) gain += (1.6 * (1 - dist / sr) + 0.2) * (flareLured ? 0.12 : 1); // eyes on the light
-      const hr = ai.hear * DF.sense * P.noise; if (dist < hr && !flareLured) gain += 2.2 * (1 - dist / hr) + 0.2;
-      if (a.state === 'eat') gain *= 0.35; // busy eating: much less attentive
-      if (dist < 6 * ai.size + 3) gain += 1.5; // right next to it: always noticed
+      const gain = senseGain(a, TP);
       a.aware = clamp(a.aware + (gain > 0 ? gain * dt : -0.12 * dt), 0, 1.6);
-      if (gain > 0 && a.aware > 0.4) { a.lastSeen.copy(P.pos); a.lost = 0; }
+      if (gain > 0 && a.aware > 0.4) { a.lastSeen.copy(TP.pos); a.lost = 0; }
       else if (!(a.state === 'chase' && a.detourT > 0)) a.lost += dt; // while going round a ravine it still knows where you are
     }
     // state machine
     if (a.state === 'wander') {
-      if (a.timer < 0 || a.pos.distanceTo(a.target) < 4) { a.timer = 6 + Math.random() * 10; if (playing && ai.type === 'hunter') a.home.lerp(P.pos, 0.3); a.target.copy(a.home).add(new V((Math.random() - 0.5) * 70, 0, (Math.random() - 0.5) * 70)); a.idle = Math.random() < 0.35; }
+      if (a.timer < 0 || a.pos.distanceTo(a.target) < 4) { a.timer = 6 + Math.random() * 10; if (playing && ai.type === 'hunter') a.home.lerp(TP.pos, 0.3); a.target.copy(a.home).add(new V((Math.random() - 0.5) * 70, 0, (Math.random() - 0.5) * 70)); a.idle = Math.random() < 0.35; }
       desiredSpeed = a.idle ? 0 : Math.max(ai.walk, d.minSpeed || 0); desiredHeading = Math.atan2(a.target.x - a.pos.x, a.target.z - a.pos.z);
       d.look = null;
       if (a.aware > 0.45) { a.state = 'alert'; a.timer = 1.6; }
     } else if (a.state === 'alert') {
-      desiredSpeed = 0; desiredHeading = angP; d.look = camera.position;
+      desiredSpeed = 0; desiredHeading = angP; d.look = lookAt;
       if (a.aware > 1) {
         a.state = ai.type === 'charger' ? 'charge' : 'chase'; a.timer = 0;
         if (ai.type === 'charger') { a.chargeDir = angP; a.timer = 4.5; }
         if (ai.type === 'hunter' || ai.type === 'charger' || !a.roared) {
           d.roar(2.2); A.roar(d.headPos(), ai.roarPitch, 1.4 * ai.size + 0.3, 2.4); a.roarHold = Math.max(ai.type === 'hunter' ? 1.6 : 0.6, (d.roarDuration || 0) * 0.85); a.roared = true;
-          msg(a.s.name + 'に気付かれた！', 2.5);
-          if (ai.type === 'pack') dinos.forEach(o => { if (o !== a && o.ai.type === 'pack') { o.aware = 1.2; o.state = 'chase'; o.lastSeen.copy(P.pos); } });
+          tell(TP, a.s.name + 'に気付かれた！', 2.5);
+          if (ai.type === 'pack') dinos.forEach(o => { if (o !== a && o.ai.type === 'pack') { o.aware = 1.2; o.state = 'chase'; o.lastSeen.copy(TP.pos); } });
         }
       } else if (a.aware < 0.2) a.state = 'wander';
     } else if (a.state === 'chase') {
-      d.look = camera.position;
+      d.look = lookAt;
       if (a.roarHold > 0) { a.roarHold -= dt; desiredSpeed = 0; desiredHeading = angP; }
       else {
         let tgt = a.lastSeen;
@@ -481,16 +538,16 @@
           tgt = a.lastSeen.clone().add(side);
         }
         desiredHeading = Math.atan2(tgt.x - a.pos.x, tgt.z - a.pos.z); desiredSpeed = ai.run * DF.speed;
-        if (a.lost > DF.lose || (a.lost > 2 && a.pos.distanceTo(a.lastSeen) < 4)) { a.state = 'wander'; a.aware = 0.3; a.home.copy(a.pos); a.timer = 0; msg('振り切った…', 2); }
+        if (a.lost > DF.lose || (a.lost > 2 && a.pos.distanceTo(a.lastSeen) < 4)) { a.state = 'wander'; a.aware = 0.3; a.home.copy(a.pos); a.timer = 0; tell(TP, '振り切った…', 2); }
       }
       if (playing && dist < ai.attack + 1.2 && rel < 0.7 && a.attackT < 0) a.attackT = 0;
     } else if (a.state === 'charge') {
-      d.look = camera.position; desiredHeading = a.chargeDir; desiredSpeed = a.timer > 3.7 ? 0 : ai.run * DF.speed;
+      d.look = lookAt; desiredHeading = a.chargeDir; desiredSpeed = a.timer > 3.7 ? 0 : ai.run * DF.speed;
       if (a.timer > 3.7) desiredHeading = a.chargeDir = angP;
       if (playing && dist < ai.attack + 0.8 && a.attackT < 0 && a.speed > 3) a.attackT = 0;
       if (a.timer < 0) { a.state = 'cool'; a.timer = 3.5; }
     } else if (a.state === 'cool') {
-      desiredSpeed = ai.walk * 0.5; desiredHeading = angP; d.look = camera.position;
+      desiredSpeed = ai.walk * 0.5; desiredHeading = angP; d.look = lookAt;
       if (a.timer < 0) { if (dist < 30 && a.aware > 0.8) { a.state = 'charge'; a.chargeDir = angP; a.timer = 4.5; } else { a.state = 'wander'; a.aware = 0.3; } }
     } else if (a.state === 'investigate') {
       // heading for a noise (rock) or the smell of meat
@@ -526,7 +583,7 @@
       desiredSpeed = 0; desiredHeading = Math.atan2(a.target.x - a.pos.x, a.target.z - a.pos.z);
       d.look = a.target;
       a.biteT -= dt;
-      if (a.biteT < 0) { a.biteT = 2.2 + Math.random() * 1.2; if (d.oneShot) d.oneShot('bite'); }
+      if (a.biteT < 0) { a.biteT = 2.2 + Math.random() * 1.2; a.biteN = (a.biteN || 0) + 1; if (d.oneShot) d.oneShot('bite'); }
       if (!d.oneShot) d.jawT = 0.35 + 0.35 * Math.sin(T * 5);
       const done = a.timer < 0 || !a.bait || a.bait.eaten;
       if (done || a.aware > 1.1) {
@@ -539,7 +596,7 @@
     // attack lunge
     if (a.attackT >= 0) {
       a.attackT += dt; d.lunge = Math.sin(Math.min(1, a.attackT / 0.7) * Math.PI);
-      if (playing && a.attackT > 0.3 && a.attackT < 0.55 && P.pos.distanceTo(d.mouthPos()) < ai.attack * 0.9 + 1.2) die(a);
+      if (playing && a.attackT > 0.3 && a.attackT < 0.55 && TP.pos.distanceTo(d.mouthPos()) < ai.attack * 0.9 + 1.2) { if (list) vsCaught(a, TP); else die(a); }
       if (a.attackT > 0.8) { a.attackT = -1; d.lunge = 0; }
       desiredSpeed *= 0.6;
     }
@@ -623,11 +680,479 @@
     $('endText').textContent = `救助ヘリに拾われた。 所要時間 ${runT.toFixed(1)} 秒（難易度：${DF.name}）`; $('end').style.display = 'flex';
   }
 
+  // ================= 3-player race (online) =================
+  // One player creates a room and is the host: it runs every dinosaur for all three runners and sends the others
+  // a snapshot ten times a second. Each player moves their own runner and sends its position to the host.
+  // All three build the same map from the seed the host picks, and start from three points the same distance
+  // from the goal. The first to reach the signal wins; anyone caught is out. Difficulty: 難しい.
+  const VS = {
+    inRoom: false, on: false, host: false, code: '', mySlot: 0, players: [], phase: 'idle', seed: 0,
+    countT: 0, sendT: 0, panelT: 0, raceT: 0, ready: new Set(), winner: -1, baits: [], dead: null, nRex: 0, spawnIn: 0, raceMap: false, avatars: []
+  };
+  const VS_COLORS = ['#e8553c', '#3c9be8', '#e8c43c'];
+  const ST_CODE = { alive: 0, dead: 1, goal: 2, gone: 3 }, CODE_ST = ['alive', 'dead', 'goal', 'gone'];
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const goalDist = p => Math.hypot(W.GOAL.x - p.x, W.GOAL.z - p.z);
+  const mkPlayer = (slot, id, name) => ({ slot, id, name: String(name || 'プレイヤー').slice(0, 8), color: VS_COLORS[slot], st: 'alive', dist: 0, time: 0, yaw: 0, cr: false,
+    tp: { pos: new V(), vis: 1, noise: 0, local: false, slot } });
+  const vsList = () => VS.players.filter(Boolean).map(p => ({ s: p.slot, name: p.name }));
+  const vsStatus = t => { $('vsStatus').textContent = t || ''; };
+  const myName = () => { const n = $('vsName').value.trim().slice(0, 8) || 'プレイヤー'; try { localStorage.setItem('dg_name', n); } catch (e) { } return n; };
+
+  function bindVersusUI() {
+    try { $('vsName').value = localStorage.getItem('dg_name') || ''; } catch (e) { }
+    $('btnVs').onclick = () => { A.init(); openLobby(); };
+    $('vsCreate').onclick = vsCreate;
+    $('vsJoin').onclick = vsJoin;
+    $('vsCode').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') vsJoin(); });
+    $('vsName').addEventListener('keydown', e => e.stopPropagation());
+    ['keyup'].forEach(t => { $('vsCode').addEventListener(t, e => e.stopPropagation()); $('vsName').addEventListener(t, e => e.stopPropagation()); });
+    $('vsGo').onclick = vsStartRace;
+    $('vsBack').onclick = vsLeaveRoom;
+    DG.Net.on(onNet);
+  }
+  function openLobby() {
+    $('vsLobby').style.display = 'flex';
+    $('vsHome').style.display = VS.inRoom ? 'none' : 'block'; $('vsRoom').style.display = VS.inRoom ? 'block' : 'none';
+    renderLobby();
+  }
+  function renderLobby() {
+    $('vsCodeShow').textContent = VS.code;
+    $('vsList').innerHTML = [0, 1, 2].map(s => {
+      const p = VS.players[s];
+      return `<li><span class="dot" style="background:${VS_COLORS[s]}"></span>${p ? esc(p.name) + (s === VS.mySlot ? '（あなた）' : '') + (s === 0 ? ' — ホスト' : '') : '<span style="color:#777">空き</span>'}</li>`;
+    }).join('');
+    const n = VS.players.filter(Boolean).length;
+    $('vsGo').style.display = VS.host ? '' : 'none';
+    $('vsGo').disabled = n < 2;
+    if (VS.inRoom && !VS.host) vsStatus('ホストが対戦を始めるのを待っています…');
+    else if (VS.inRoom && n < 3) vsStatus(n < 2 ? 'ほかのプレイヤーの参加を待っています…' : `${n}人で始められます（3人そろうのがおすすめ）`);
+    else if (VS.inRoom) vsStatus('3人そろいました。「対戦開始」で始まります');
+  }
+  async function vsCreate() {
+    vsStatus('部屋を作っています…');
+    try {
+      const code = await DG.Net.host();
+      Object.assign(VS, { inRoom: true, host: true, code, mySlot: 0, players: [mkPlayer(0, null, myName())], phase: 'lobby' });
+      openLobby();
+    } catch (e) { DG.Net.close(); vsStatus(DG.Net.why(e)); }
+  }
+  async function vsJoin() {
+    const code = $('vsCode').value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{5}$/.test(code)) { vsStatus('5文字の部屋コードを入力してください'); return; }
+    vsStatus('接続しています…');
+    try {
+      await DG.Net.join(code);
+      Object.assign(VS, { host: false, code });
+      DG.Net.send({ t: 'hello', name: myName(), v: 1 });
+      vsStatus('ホストの応答を待っています…');
+      setTimeout(() => { if (!VS.inRoom && DG.Net.connected && !DG.Net.isHost) vsStatus('ホストから応答がありません'); }, 8000);
+    } catch (e) { DG.Net.close(); vsStatus(DG.Net.why(e)); }
+  }
+  // leave the room (and the race, if one is on) and go back to the title screen
+  function vsLeaveRoom() {
+    DG.Net.close();
+    const hadRace = VS.raceMap;
+    Object.assign(VS, { inRoom: false, on: false, host: false, code: '', players: [], phase: 'idle', raceMap: false, dead: null });
+    VS.avatars.forEach(g => g.visible = false);
+    $('vsLobby').style.display = 'none'; $('race').style.display = 'none'; $('count').style.display = 'none';
+    $('btnRetry').textContent = 'もう一度'; $('btnTitle').textContent = 'タイトルへ'; $('endRank').innerHTML = ''; vsStatus('');
+    setDiff(diffKey); toMenu();
+    if (hadRace) newMap(); // the race map has no glade for the title screen and three starts; build a normal one
+  }
+  function vsAbort(text) { vsLeaveRoom(); openLobby(); vsStatus(text); }
+  // after a race: back to the room (the host can start another one)
+  function vsToLobby() {
+    VS.on = false; VS.phase = 'lobby'; VS.dead = null;
+    VS.avatars.forEach(g => g.visible = false);
+    if (VS.host) { VS.players.forEach((p, i) => { if (p && p.left) VS.players[i] = undefined; }); sendLobby(); } // free the seats of those who left
+    $('race').style.display = 'none'; $('count').style.display = 'none'; $('endRank').innerHTML = '';
+    $('btnRetry').textContent = 'もう一度'; $('btnTitle').textContent = 'タイトルへ';
+    setDiff(diffKey); toMenu(); openLobby();
+  }
+
+  // ---- network messages ----
+  function onNet(type, id, m) {
+    if (type === 'leave') return vsLeft(id);
+    if (type !== 'msg' || !m || typeof m.t !== 'string') return;
+    if (VS.host) hostMsg(id, m); else guestMsg(m);
+  }
+  const playerById = id => VS.players.find(p => p && p.id === id);
+  function vsLeft(id) {
+    if (!VS.host) { if (VS.inRoom || DG.Net.connected) vsAbort('ホストとの接続が切れました'); return; }
+    const p = playerById(id); if (!p) return;
+    if (VS.phase === 'lobby') { VS.players[p.slot] = undefined; sendLobby(); renderLobby(); }
+    else { p.left = true; if (p.st === 'alive') { p.st = 'gone'; p.dist = goalDist(p.tp.pos); } VS.ready.add(p.slot); vsMaybeGo(); vsCheckEnd(); }
+  }
+  function sendLobby() {
+    VS.players.forEach(p => { if (p && p.id) DG.Net.send({ t: 'lobby', you: p.slot, code: VS.code, list: vsList() }, p.id); });
+  }
+  function hostMsg(id, m) {
+    const p = playerById(id);
+    if (m.t === 'hello') {
+      if (p) return;
+      const slot = [1, 2].find(s => !VS.players[s]);
+      if (VS.phase !== 'lobby' || !slot) { DG.Net.send({ t: 'busy', why: VS.phase !== 'lobby' ? '対戦中のため入れません' : '部屋が満員です（3人まで）' }, id); setTimeout(() => DG.Net.kick(id), 500); return; }
+      VS.players[slot] = mkPlayer(slot, id, m.name); sendLobby(); renderLobby();
+      return;
+    }
+    if (!p) return;
+    if (m.t === 'ready') { VS.ready.add(p.slot); vsMaybeGo(); }
+    else if (m.t === 'me' && p.st === 'alive') {
+      p.tp.pos.set(+m.x || 0, +m.y || 0, +m.z || 0); p.tp.vis = clamp(+m.v || 0, 0, 1); p.tp.noise = clamp(+m.n || 0, 0, 1); p.yaw = +m.yaw || 0; p.cr = !!m.cr;
+    } else if (m.t === 'lure' && VS.phase === 'race') {
+      const pos = new V(+m.x || 0, +m.y || 0, +m.z || 0);
+      const bait = m.kind === 'meat' ? { pos, eaten: false, remote: true } : { pos, t: DF.flareTime, remote: true, get dead() { return this.t <= 0; } };
+      if (m.kind !== 'meat') VS.baits.push(bait);
+      const n = lureAt(pos, m.kind === 'meat' ? 'meat' : 'flare', bait);
+      if (n) tell(p.tp, lureText(m.kind === 'meat' ? 'meat' : 'flare'), 2.2);
+    } else if (m.t === 'dart' && VS.phase === 'race') {
+      const a = TREX()[m.k | 0]; if (a && a.d.root.visible) tranq(a, p.tp);
+    } else if (m.t === 'goal' && VS.phase === 'race' && p.st === 'alive') vsGoal(p.slot, +m.time || VS.raceT);
+  }
+  function guestMsg(m) {
+    if (m.t === 'busy') { vsAbort(m.why || '部屋に入れませんでした'); return; }
+    if (m.t === 'lobby') {
+      const was = VS.inRoom;
+      VS.inRoom = true; VS.mySlot = m.you | 0; VS.code = m.code || VS.code;
+      const old = VS.players; VS.players = [];
+      (m.list || []).forEach(e => { VS.players[e.s] = mkPlayer(e.s, null, e.name); if (old[e.s]) VS.players[e.s].st = old[e.s].st; });
+      if (VS.phase === 'idle') VS.phase = 'lobby';
+      if (!was || $('vsLobby').style.display === 'flex') openLobby(); else renderLobby();
+    } else if (m.t === 'start') vsPrepare(m.seed | 0, m.list || []);
+    else if (m.t === 'go') { if (VS.phase === 'loading') VS.goPending = true; else vsGo(); }
+    else if (m.t === 'snap') applySnap(m);
+    else if (m.t === 'caught') { const me = VS.players[VS.mySlot]; if (me && me.st === 'alive') { me.st = 'dead'; me.dist = goalDist(P.pos); localCaught(TREX()[m.k | 0]); } }
+    else if (m.t === 'tell') msg(String(m.m || '').slice(0, 60), +m.d || 2);
+    else if (m.t === 'fx' && m.k === 'spawn') { A.roar(new V(+m.x, +m.y, +m.z), DG.SPECIES.trex.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${m.n | 0}頭）`, 3); }
+    else if (m.t === 'end') showRaceEnd(m.w, m.r || []);
+  }
+
+  // ---- starting a race ----
+  async function vsStartRace() {
+    if (!VS.host || VS.phase === 'loading' || VS.players.filter(Boolean).length < 2) return;
+    VS.seed = (Math.random() * 1e6) | 0;
+    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList() });
+    VS.ready = new Set();
+    VS.players.forEach(p => { if (p && !playerConnected(p)) VS.ready.add(p.slot); });
+    await vsPrepare(VS.seed, vsList());
+    VS.ready.add(0); vsMaybeGo();
+    const seed = VS.seed; setTimeout(() => { if (VS.seed === seed) vsMaybeGo(true); }, 25000); // don't wait forever for a slow phone
+  }
+  const playerConnected = p => p.slot === VS.mySlot || !!p.id;
+  // build the race map from the host's seed (everyone ends up with exactly the same trees, rocks and ravines)
+  async function vsPrepare(seed, list) {
+    VS.phase = 'loading'; VS.seed = seed; VS.on = false; VS.goPending = false;
+    const old = VS.players; VS.players = []; // exactly the players in this race (someone may have left the room since)
+    list.forEach(e => { VS.players[e.s] = old[e.s] && old[e.s].name === String(e.name).slice(0, 8) ? old[e.s] : mkPlayer(e.s, null, e.name); });
+    ['menu', 'end', 'pause', 'vsLobby', 'hud'].forEach(id => $(id).style.display = 'none');
+    $('loading').style.display = ''; setLoad(0.4, '対戦用の森を生成中'); await frame(); await frame();
+    const scene = world.scene;
+    world.dispose(); W.reseed(seed, true);
+    world = W.create(renderer, { scene, layout: { veg: 1, fern: 1 } });
+    dinos.forEach(a => { a.d.ground = W.height; });
+    setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
+    renderer.compile(world.scene, camera);
+    VS.raceMap = true; mapUsed = true;
+    setLoad(1, 'ほかのプレイヤーを待っています…');
+    VS.phase = 'ready';
+    if (!VS.host) DG.Net.send({ t: 'ready' });
+    if (VS.goPending) { VS.goPending = false; vsGo(); } // the host started without waiting for this (slow) machine
+  }
+  function vsMaybeGo(force) {
+    if (!VS.host || VS.phase !== 'ready') return;
+    const all = VS.players.filter(Boolean).every(p => VS.ready.has(p.slot));
+    if (!all && !force) return;
+    DG.Net.broadcast({ t: 'go' }); vsGo();
+  }
+  function vsGo() {
+    if (VS.phase !== 'ready') return;
+    $('loading').style.display = 'none';
+    VS.on = true; VS.phase = 'count'; VS.countT = 3.5;
+    DF = DG.DIFFS.hard;
+    ['menu', 'end', 'pause', 'vsLobby'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block'; $('race').style.display = 'block';
+    const st = W.STARTS[VS.mySlot] || W.START;
+    P.pos.set(st.x, W.height(st.x, st.z) + 1.65, st.z); P.vel.set(0, 0, 0); P.eye = 1.65; P.ground = true;
+    P.yaw = Math.atan2(-(W.GOAL.x - st.x), -(W.GOAL.z - st.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
+    killer = null; runT = 0; shake = 0; VS.dead = null; VS.raceT = 0; VS.winner = -1; VS.baits = []; VS.sendT = 0; VS.panelT = 0;
+    items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS });
+    LOCAL.slot = VS.mySlot;
+    VS.players.forEach(p => {
+      if (!p) return;
+      p.st = !VS.host || playerConnected(p) ? 'alive' : 'gone'; p.time = 0;
+      const s = W.STARTS[p.slot] || W.START; p.tp.pos.set(s.x, W.height(s.x, s.z) + 1.65, s.z); p.dist = goalDist(s);
+      p.yaw = Math.atan2(-(W.GOAL.x - s.x), -(W.GOAL.z - s.z));
+    });
+    if (VS.players[VS.mySlot]) VS.players[VS.mySlot].tp = LOCAL;
+    // the hunters: the first DF.count start on the map, more arrive every DF.spawnEvery seconds (run by the host)
+    const trex = TREX();
+    dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.feedT = 0; a.d.look = null; });
+    roster = trex.slice(0, DF.max);
+    if (VS.host) {
+      const rnd = DG.N.rng(VS.seed + 11), spots = [[0.42, 10], [0.78, -25], [0.6, 70], [0.32, -80], [0.9, 60], [0.55, -60]];
+      roster.forEach((a, i) => {
+        const sp = spots[i % spots.length];
+        const p = new V(lerp(W.START.x, W.GOAL.x, sp[0]) + sp[1], 0, lerp(W.START.z, W.GOAL.z, sp[0])).add(new V((rnd() - 0.5) * 30, 0, (rnd() - 0.5) * 30));
+        for (let k = 0; k < 10 && W.STARTS.some(s => Math.hypot(s.x - p.x, s.z - p.z) < 120); k++) p.z -= 25; // keep clear of every start
+        activateDino(a, p, rnd() * Math.PI * 2, i < DF.count);
+      });
+      spawnT = DF.spawnEvery;
+    }
+    ensureAvatars();
+    state = 'play';
+    if (!DG.MOBILE) { lock(); if (document.pointerLockElement !== renderer.domElement) { state = 'pause'; $('pause').style.display = 'flex'; } }
+    msg('最初に救難信号へたどり着いた人の勝ち', 4);
+  }
+
+  // ---- the other runners, as simple coloured figures with their name above ----
+  function ensureAvatars() {
+    VS.avatars.forEach(g => { world.scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); });
+    VS.avatars = [];
+    VS.players.forEach(p => {
+      if (!p || p.slot === VS.mySlot) return;
+      const g = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.75 });
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.85, 4, 10), mat); body.position.y = 0.72; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd9b48f, roughness: 0.8 })); head.position.y = 1.47; g.add(head);
+      const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.18), new THREE.MeshStandardMaterial({ color: 0x3b3a2c, roughness: 0.9 })); pack.position.set(0, 0.95, 0.24); g.add(pack);
+      const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const c = cv.getContext('2d');
+      c.fillStyle = 'rgba(0,0,0,0.5)'; c.fillRect(0, 10, 256, 44); c.font = 'bold 32px sans-serif'; c.textAlign = 'center'; c.fillStyle = p.color; c.fillText(p.name, 128, 44);
+      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+      const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })); tag.scale.set(1.8, 0.45, 1); tag.position.y = 2.15; g.add(tag);
+      g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      g.userData.slot = p.slot; g.position.copy(p.tp.pos).y -= 1.65;
+      world.scene.add(g); VS.avatars.push(g);
+    });
+  }
+  function updateAvatars(dt) {
+    const k = 1 - Math.exp(-dt * 12);
+    VS.avatars.forEach(g => {
+      const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
+      g.visible = p.st === 'alive' || p.st === 'goal';
+      g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
+      g.position.y = W.height(g.position.x, g.position.z);
+      g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr ? 0.62 : 1, k);
+    });
+  }
+
+  // ---- host: sending the state of the race; guest: applying it ----
+  function sendSnap() {
+    const p = [];
+    VS.players.forEach(pl => { if (!pl) return; const q = pl.tp.pos; p.push([pl.slot, +q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2), +pl.yaw.toFixed(3), pl.cr ? 1 : 0, ST_CODE[pl.st] | 0]); });
+    const d = [];
+    TREX().forEach((a, k) => {
+      if (!a.d.root.visible) return;
+      const hunting = a.tgtP && (a.state === 'alert' || a.state === 'chase' || a.state === 'charge' || a.state === 'cool') ? a.tgtP.slot : -1;
+      d.push([k, +a.pos.x.toFixed(2), +a.pos.z.toFixed(2), +a.heading.toFixed(3), +a.speed.toFixed(2), Math.round(a.d.lunge * 100), a.tranq > 0 ? 1 : 0, a.roarN, a.biteN, hunting]);
+    });
+    DG.Net.broadcast({ t: 'snap', p, d, n: roster.filter(a => a.d.root.visible).length, sp: SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1 });
+  }
+  function applySnap(m) {
+    (m.p || []).forEach(e => {
+      const pl = VS.players[e[0]]; if (!pl || e[0] === VS.mySlot) return;
+      pl.tp.pos.set(e[1], e[2], e[3]); pl.yaw = e[4]; pl.cr = !!e[5];
+      const st = CODE_ST[e[6]] || 'alive'; if (st !== 'alive' && pl.st === 'alive') pl.dist = goalDist(pl.tp.pos); pl.st = st;
+    });
+    const trex = TREX(); trex.forEach(a => a.netOn = false);
+    (m.d || []).forEach(e => {
+      const a = trex[e[0]]; if (!a) return;
+      a.netOn = true; a.nx = e[1]; a.nz = e[2]; a.nh = e[3]; a.ns = e[4]; a.nl = e[5] / 100; a.ntr = e[6]; a.hunting = e[9];
+      if (a.roarSeen === undefined) { a.roarSeen = e[7]; a.biteSeen = e[8]; }
+      a.nroar = e[7]; a.nbite = e[8];
+    });
+    VS.nRex = m.n | 0; VS.spawnIn = m.sp | 0;
+  }
+  function followSnap(dt) {
+    const k = 1 - Math.exp(-dt * 8);
+    TREX().forEach(a => {
+      if (!a.netOn) { a.d.root.visible = false; return; }
+      if (!a.d.root.visible) { a.d.root.visible = true; a.pos.set(a.nx, 0, a.nz); a.heading = a.nh; }
+      a.nx += Math.sin(a.nh) * a.ns * dt; a.nz += Math.cos(a.nh) * a.ns * dt; // keep moving between snapshots
+      a.pos.x = lerp(a.pos.x, a.nx, k); a.pos.z = lerp(a.pos.z, a.nz, k);
+      const dh = wrapA(a.nh - a.heading) * k; a.heading = wrapA(a.heading + dh); a.turnRate = dh / Math.max(dt, 1e-3);
+      a.speed = a.ns; a.d.lunge = a.nl; a.tranq = a.ntr ? 1 : 0;
+      a.state = a.hunting === VS.mySlot ? 'chase' : 'wander';
+      a.d.look = a.hunting === VS.mySlot ? camera.position : a.hunting >= 0 && VS.players[a.hunting] ? VS.players[a.hunting].tp.pos : null;
+      if (a.nroar !== a.roarSeen) { a.roarSeen = a.nroar; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.4 * a.ai.size + 0.3, 2.4); }
+      if (a.nbite !== a.biteSeen) { a.biteSeen = a.nbite; if (a.d.oneShot) a.d.oneShot('bite'); }
+      applyDino(a, dt);
+    });
+  }
+
+  // ---- host: more T-rexes arrive, out of every runner's way ----
+  function trySpawnVS(dt, list) {
+    if (!SPAWN_EVERY() || !canSpawn() || !list.length) return;
+    spawnT -= dt; if (spawnT > 0) return;
+    spawnT = SPAWN_EVERY();
+    const a = roster.find(x => !x.d.root.visible); if (!a) return;
+    for (let i = 0; i < 60; i++) {
+      const anchor = list[Math.floor(Math.random() * list.length)].pos;
+      const ang = Math.random() * Math.PI * 2, dist = 170 + Math.random() * 60;
+      const p = new V(anchor.x + Math.sin(ang) * dist, 0, anchor.z + Math.cos(ang) * dist);
+      if (Math.abs(p.x) > W.LIMIT - 20 || Math.abs(p.z) > W.LIMIT - 20 || W.ravineAt(p.x, p.z)) continue;
+      if (list.some(tp => Math.hypot(tp.pos.x - p.x, tp.pos.z - p.z) < 140)) continue;
+      activateDino(a, p, Math.atan2(anchor.x - p.x, anchor.z - p.z), true);
+      a.home.lerp(anchor, 0.25);
+      const n = roster.filter(x => x.d.root.visible).length, y = W.height(p.x, p.z) + 4;
+      A.roar(new V(p.x, y, p.z), a.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${n}頭）`, 3);
+      DG.Net.broadcast({ t: 'fx', k: 'spawn', x: p.x, y, z: p.z, n });
+      return;
+    }
+  }
+  // the runners still in the race, as the host's AI sees them
+  const runners = () => VS.players.filter(p => p && p.st === 'alive').map(p => p.tp);
+
+  // ---- caught / goal / end ----
+  function vsCaught(a, tp) {
+    const p = VS.players[tp.slot]; if (!p || p.st !== 'alive') return;
+    p.st = 'dead'; p.dist = goalDist(tp.pos); p.time = VS.raceT;
+    a.attackT = -1; a.feedT = 4; a.state = 'wander'; a.aware = 0.3; a.timer = 4; a.tgtP = null; a.home.copy(a.pos);
+    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8); a.d.roar(2.2);
+    if (tp.local) localCaught(a); else if (p.id) DG.Net.send({ t: 'caught', k: TREX().indexOf(a) }, p.id);
+    VS.players.forEach(o => { if (o && o !== p && o.st === 'alive') tell(o.tp, `${p.name} が恐竜に捕まった`, 2.5); });
+    vsCheckEnd();
+  }
+  function localCaught(a) {
+    VS.dead = { a, t: 0 }; state = 'dead'; shake = 0.25; if (document.pointerLockElement) document.exitPointerLock();
+    $('pause').style.display = 'none';
+    if (a) A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8);
+  }
+  function vsGoal(slot, time) {
+    const p = VS.players[slot]; if (!p || p.st !== 'alive' || VS.winner >= 0) return;
+    p.st = 'goal'; p.dist = 0; p.time = time; VS.winner = slot;
+    vsCheckEnd();
+  }
+  function vsCheckEnd() {
+    if (!VS.host || (VS.phase !== 'race' && VS.phase !== 'count')) return;
+    const ps = VS.players.filter(Boolean);
+    if (VS.winner < 0 && ps.some(p => p.st === 'alive')) return;
+    ps.forEach(p => { if (p.st === 'alive') p.dist = goalDist(p.tp.pos); });
+    const order = { goal: 0, alive: 1, dead: 2, gone: 3 };
+    const r = ps.slice().sort((a, b) => order[a.st] - order[b.st] || a.dist - b.dist).map(p => [p.slot, ST_CODE[p.st], Math.round(p.dist), +(p.time || VS.raceT).toFixed(1)]);
+    DG.Net.broadcast({ t: 'end', w: VS.winner, r });
+    showRaceEnd(VS.winner, r);
+  }
+  function showRaceEnd(w, r) {
+    VS.phase = 'end'; if (state === 'play' || state === 'pause') state = 'win';
+    r.forEach(e => { const p = VS.players[e[0]]; if (p) { p.st = CODE_ST[e[1]] || p.st; p.dist = e[2]; } });
+    VS.panelT = 0; vsHud(0, 0);
+    if (document.pointerLockElement) document.exitPointerLock();
+    $('pause').style.display = 'none'; $('count').style.display = 'none';
+    const wp = VS.players[w];
+    $('endTitle').textContent = w >= 0 && wp ? (w === VS.mySlot ? '🏆 あなたの勝ち！' : `🏆 ${wp.name} の勝ち`) : '全員脱落';
+    $('endTitle').style.color = w === VS.mySlot ? '#c9e6a0' : w >= 0 ? '#ffe2a0' : '#e05a40';
+    $('endText').textContent = `3人対戦（難易度：難しい）　レース時間 ${VS.raceT.toFixed(1)} 秒`;
+    const tag = ['走行中', '脱落', 'ゴール', '切断'];
+    $('endRank').innerHTML = r.map((e, i) => {
+      const p = VS.players[e[0]]; if (!p) return '';
+      return `<div>${i + 1}位　<span class="dot" style="background:${p.color}"></span>${esc(p.name)}${e[0] === VS.mySlot ? '（あなた）' : ''}　${tag[e[1]]}${e[1] === 2 ? '' : `　救難信号まで ${e[2]} m`}</div>`;
+    }).join('');
+    $('btnRetry').textContent = 'ロビーへ'; $('btnTitle').textContent = '部屋を出る';
+    $('end').style.display = 'flex';
+  }
+
+  // ---- the race's frame ----
+  const cv0 = new V();
+  function versusTick(dt) {
+    if (VS.phase === 'count') {
+      VS.countT -= dt; const c = $('count');
+      c.style.display = 'flex'; c.textContent = VS.countT > 0.5 ? String(Math.ceil(VS.countT - 0.5)) : 'GO!';
+      if (VS.countT <= 0.5 && VS.countT + dt > 0.5) VS.phase = 'race';
+    } else if ($('count').style.display !== 'none' && VS.phase === 'race' && VS.raceT > 1) $('count').style.display = 'none';
+    const live = VS.phase === 'race', me = VS.players[VS.mySlot];
+    if (live) VS.raceT += dt;
+    // my runner
+    if (me && me.st === 'alive' && (VS.phase === 'count' || live) && state === 'play') { runT += dt; updatePlayer(dt); items.update(dt, T); }
+    me && (me.tp === LOCAL) && (me.yaw = P.yaw, me.cr = P.crouch);
+    // the dinosaurs
+    let threat = 0;
+    if (VS.host) {
+      const list = runners();
+      VS.baits = VS.baits.filter(b => { b.t -= dt; return b.t > -5; });
+      if (live) trySpawnVS(dt, list);
+      roster.forEach(a => { if (!a.d.root.visible) return; if (live) updateDino(a, dt, true, list); else applyDino(a, dt); });
+      VS.sendT -= dt; if (VS.sendT <= 0 && VS.phase !== 'end') { VS.sendT = 0.1; sendSnap(); }
+      roster.forEach(a => { if (a.d.root.visible && a.tgtP === LOCAL && (a.state === 'chase' || a.state === 'charge')) threat = Math.max(threat, 1 - a.pos.distanceTo(P.pos) / 45); });
+    } else {
+      followSnap(dt);
+      VS.sendT -= dt;
+      if (VS.sendT <= 0 && me && me.st === 'alive' && VS.phase !== 'end') { VS.sendT = 0.1; DG.Net.send({ t: 'me', x: +P.pos.x.toFixed(2), y: +P.pos.y.toFixed(2), z: +P.pos.z.toFixed(2), yaw: +P.yaw.toFixed(3), cr: P.crouch ? 1 : 0, n: +P.noise.toFixed(2), v: +P.vis.toFixed(2) }); }
+      TREX().forEach(a => { if (a.d.root.visible && a.hunting === VS.mySlot) threat = Math.max(threat, 1 - a.pos.distanceTo(P.pos) / 45); });
+    }
+    updateAvatars(dt);
+    // camera when out of the race: the catch, then following whoever is still running
+    if (VS.dead) {
+      const D = VS.dead; D.t += dt;
+      if (D.t < 3 && D.a) {
+        const k0 = D.a, mp = k0.d.mouthPos(), S = k0.ai.size, kf = new V(Math.sin(k0.heading), 0, Math.cos(k0.heading));
+        const want = mp.clone().addScaledVector(kf, 1.6 * S + 0.9 - Math.min(1, D.t * 0.5) * (0.9 * S)).add(new V(0, -0.25 * S, 0));
+        want.y = Math.max(want.y, W.height(want.x, want.z) + 0.4);
+        camera.position.lerp(want, 1 - Math.exp(-dt * 4));
+        const m4 = new THREE.Matrix4().lookAt(camera.position, mp, new V(0, 1, 0)); camera.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(m4), 1 - Math.exp(-dt * 8));
+        $('vign').style.opacity = Math.min(1, 0.5 + D.t * 0.4);
+        if (D.t > 2.2 && D.t - dt <= 2.2) msg('脱落… ほかのプレイヤーを観戦中', 4);
+      } else spectate(dt);
+    } else if (me && me.st === 'goal') spectate(dt);
+    world.update(dt, T, VS.dead || (me && me.st !== 'alive') ? camera.position : P.pos);
+    A.listener(camera.position, camera.getWorldDirection(cv0));
+    vsHud(dt, clamp(threat, 0, 1));
+  }
+  function spectate(dt) {
+    const alive = VS.players.filter(p => p && p.st === 'alive' && p.slot !== VS.mySlot).sort((a, b) => goalDist(a.tp.pos) - goalDist(b.tp.pos));
+    const t = alive[0];
+    let want, look;
+    if (t) { const q = t.tp.pos; want = new V(q.x + Math.sin(t.yaw) * 7, q.y + 2.6, q.z + Math.cos(t.yaw) * 7); look = new V(q.x, q.y - 0.2, q.z); }
+    else { want = new V(W.GOAL.x + 30, W.height(W.GOAL.x, W.GOAL.z) + 40, W.GOAL.z + 60); look = new V(W.GOAL.x, W.height(W.GOAL.x, W.GOAL.z), W.GOAL.z); }
+    want.y = Math.max(want.y, W.height(want.x, want.z) + 1.5);
+    camera.position.lerp(want, 1 - Math.exp(-dt * 3));
+    const m4 = new THREE.Matrix4().lookAt(camera.position, look, new V(0, 1, 0)); camera.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(m4), 1 - Math.exp(-dt * 5));
+    $('vign').style.opacity = 0;
+  }
+  function vsHud(dt, threat) {
+    const me = VS.players[VS.mySlot];
+    const myAlive = me && me.st === 'alive';
+    const gd = goalDist(P.pos);
+    ['inv', 'stam', 'cross', 'status'].forEach(id => $(id).style.visibility = myAlive ? '' : 'hidden'); // nothing to hold while watching
+    $('dist').textContent = myAlive ? Math.round(gd) : '—';
+    const n = VS.host ? roster.filter(a => a.d.root.visible).length : VS.nRex, sp = VS.host ? (SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1) : VS.spawnIn;
+    $('rexn').textContent = `🦖×${n}` + (sp > 0 ? `（次の出現まで ${sp}秒）` : '') + '　【難しい・3人対戦】';
+    // compass: north/south…, the signal, and the other runners
+    const c = $('compass'); let h = '';
+    const mk = (ang, label, cls, style) => { const r = wrapA(ang - P.yaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
+    mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
+    mk(Math.atan2(-(W.GOAL.x - P.pos.x), -(W.GOAL.z - P.pos.z)), '▼', 'gl');
+    VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - P.pos.x), -(p.tp.pos.z - P.pos.z)), '●', '', `color:${p.color}`); });
+    if (items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
+    c.innerHTML = h;
+    if (!VS.dead) $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);
+    heartT -= dt; if (myAlive && threat > 0.05 && heartT < 0) { A.heart(0.3 + threat * 0.7); heartT = 1.1 - threat * 0.65; }
+    if (msgT > 0) { msgT -= dt; if (msgT <= 0) $('msg').style.opacity = 0; }
+    // everyone's distance to the signal, closest first
+    VS.panelT -= dt;
+    if (VS.panelT <= 0) {
+      VS.panelT = 0.25;
+      const rows = VS.players.filter(Boolean).map(p => ({ p, d: p.st === 'alive' ? goalDist(p.slot === VS.mySlot ? P.pos : p.tp.pos) : p.st === 'goal' ? 0 : p.dist }));
+      rows.sort((a, b) => (a.p.st === 'goal' ? -1 : 0) - (b.p.st === 'goal' ? -1 : 0) || (a.p.st === 'alive' ? 0 : 1) - (b.p.st === 'alive' ? 0 : 1) || a.d - b.d);
+      const tag = { dead: '脱落', gone: '切断', goal: 'ゴール' };
+      $('race').innerHTML = '<div class="tbl"><div class="t">救難信号までの距離</div>' + rows.map(({ p, d }) =>
+        `<div class="${p.slot === VS.mySlot ? 'me' : ''} ${p.st === 'dead' || p.st === 'gone' ? 'out' : ''} ${p.st === 'goal' ? 'won' : ''}"><span class="dot" style="background:${p.color}"></span>${esc(p.name)}　${p.st === 'alive' ? Math.round(d) + ' m' : tag[p.st] + (p.st === 'goal' ? '' : `（${Math.round(d)} m）`)}</div>`).join('') + '</div>';
+    }
+    // reaching the signal
+    if (live() && myAlive && gd < 8) {
+      if (VS.host) vsGoal(VS.mySlot, VS.raceT);
+      else { me.st = 'goal'; me.dist = 0; DG.Net.send({ t: 'goal', time: +VS.raceT.toFixed(1) }); }
+      state = 'win'; if (document.pointerLockElement) document.exitPointerLock();
+      msg('救難信号に到着！ 結果を待っています…', 5);
+    }
+  }
+  const live = () => VS.phase === 'race';
+
   // ---------------- main loop ----------------
   function loop() { tick(Math.min(clock.getDelta(), 1 / 20)); }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   function tick(dt) {
     T += dt; if (DG.MOBILE) touchUI();
+    if (VS.on) { versusTick(dt); renderer.render(world.scene, camera); return; }
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
       const R = 4 + a.s.ai.size * 7, cx = W.START.x, cz = W.START.z - 12; // centre of the start glade (see okAt in world.js)

@@ -14,16 +14,18 @@
   const vnoise2 = (x, y, s) => N.vnoise2(x, y, s + SEED);
 
   W.RAVINE_DEPTH = 5; W.RAVINE_MARGIN = 9; // margin = half-width of the detailed mesh strip
-  function makeRavines() {
+  // versus: the 3-player race. Its three starts are spread across the south, all the same distance from the goal,
+  // and its ravines are longer and straighter so that every route has to cross each of them.
+  function makeRavines(versus) {
     const rr = N.rng(991 + SEED);
     const r = new V().subVectors(W.GOAL, W.START).normalize(), p = new V(-r.z, 0, r.x);
     const build = () => {
       const out = [];
       [0.24, 0.47, 0.68, 0.87].forEach((f0, k) => {
         const f = f0 + (rr() - 0.5) * 0.07; // where along the route it crosses
-        const c = W.START.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * 90);
-        const ang = Math.atan2(p.x, p.z) + (rr() - 0.5) * 0.6, dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x);
-        const L = 160 + rr() * 100, n = 12, pts = [];
+        const c = W.START.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * (versus ? 30 : 90));
+        const ang = Math.atan2(p.x, p.z) + (rr() - 0.5) * (versus ? 0.3 : 0.6), dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x);
+        const L = versus ? 400 + rr() * 40 : 160 + rr() * 100, n = versus ? 16 : 12, pts = [];
         for (let i = 0; i < n; i++) {
           const s = (i / (n - 1) - 0.5) * L, w = (vnoise2(i * 0.6, k * 7.3, 992) - 0.5) * 16;
           pts.push(c.clone().addScaledVector(dir, s).addScaledVector(side, w));
@@ -44,7 +46,16 @@
     }
     return out;
   }
-  W.reseed = function (seed) { SEED = seed | 0; W.seed = SEED; W.RAVINES = makeRavines(); };
+  // the three starts of a race: the single-player start turned about the goal by -16°, 0 and +16°
+  const raceStarts = () => [-16, 0, 16].map(deg => {
+    const a = deg * Math.PI / 180, vx = W.START.x - W.GOAL.x, vz = W.START.z - W.GOAL.z;
+    return new V(W.GOAL.x + vx * Math.cos(a) - vz * Math.sin(a), 0, W.GOAL.z + vx * Math.sin(a) + vz * Math.cos(a));
+  });
+  W.reseed = function (seed, versus) {
+    SEED = seed | 0; W.seed = SEED; W.VERSUS = !!versus;
+    W.STARTS = versus ? raceStarts() : [W.START];
+    W.RAVINES = makeRavines(!!versus);
+  };
   W.reseed((Math.random() * 1e6) | 0);
   // half-width at fraction t along the ravine: alternating narrow (≈3.5 m, jumpable) and wide (≈7.5 m) stretches
   W.ravineHW = (rv, t) => 1.75 + 2.0 * N.smoothstep(0.42, 0.58, vnoise2(t * rv.len / 32, rv.seed, 994));
@@ -77,7 +88,8 @@
     const e = Math.max(Math.abs(x), Math.abs(z));
     h += N.smoothstep(380, 490, e) * 70 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
     // gentle basins at start and goal
-    for (const p of [W.START, W.GOAL]) { const d = Math.hypot(x - p.x, z - p.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
+    for (const p of W.STARTS) { const d = Math.hypot(x - p.x, z - p.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
+    { const d = Math.hypot(x - W.GOAL.x, z - W.GOAL.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
     const q = W.ravineAt(x, z); if (q) h -= q.depth;
     return h;
   };
@@ -190,7 +202,9 @@
     const before = new Set(scene.children);
     const T = DG.T, rnd = N.rng(77 + SEED);
     // quality profile (set by game.js; a phone gets fewer plants and a smaller shadow map)
-    const Q = DG.Q || { veg: 1, fern: 1, shadow: 4096 };
+    // In a race every player's map must be identical (the same trees block everyone), so the plant counts are not
+    // thinned for phones there: opts.layout = {veg: 1, fern: 1}.
+    const Q = Object.assign({ veg: 1, fern: 1, shadow: 4096 }, DG.Q, opts && opts.layout);
     // ---- sky & lights ----
     const sky = new THREE_Sky(); sky.scale.setScalar(4500);
     const su = sky.material.uniforms; su.turbidity.value = 9; su.rayleigh.value = 1.6; su.mieCoefficient.value = 0.006; su.mieDirectionalG.value = 0.82;
@@ -362,9 +376,10 @@
     };
     const okAt = (x, z, clear) => {
       if (Math.abs(x) > W.LIMIT + 40 || Math.abs(z) > W.LIMIT + 40) return false;
-      for (const p of [W.START, W.GOAL]) if (Math.hypot(x - p.x, z - p.z) < clear) return false;
+      for (const p of W.STARTS) if (Math.hypot(x - p.x, z - p.z) < clear) return false;
+      if (Math.hypot(x - W.GOAL.x, z - W.GOAL.z) < clear) return false;
       // the glade at the start, where the title screen shows the dinosaur off: nothing taller than ferns grows there
-      if (clear >= 10 && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
+      if (clear >= 10 && !W.VERSUS && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
       const q = W.ravineAt(x, z); if (q && q.d < q.hw + 3) return false; // keep ravines and their rims clear
       return true;
     };

@@ -66,6 +66,33 @@
   #credits{position:fixed;right:14px;bottom:10px;font-size:11px;color:#999;text-align:right;line-height:1.6;max-width:46vw;pointer-events:auto}
   #credits a{color:#bbb}
   #pause{display:none;z-index:25;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+  /* ---- 3-player race ---- */
+  #vsLobby{display:none;z-index:28;pointer-events:auto;align-items:center;justify-content:center;background:rgba(0,0,0,.6);overflow-y:auto}
+  #vsLobby .box{width:min(520px,92vw);padding:22px 26px;background:rgba(14,13,9,.92);border:1px solid #c9a24a;border-radius:3px;max-height:92vh;overflow-y:auto}
+  #vsLobby h2{margin:0 0 8px;letter-spacing:.2em}
+  #vsLobby .note{font-size:12px;color:#bdb39a;line-height:1.7;margin:6px 0}
+  #vsLobby .small{font-size:11px;color:#8f8775}
+  #vsLobby .row{display:flex;align-items:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+  #vsLobby .lbl{font-size:12px;color:#c9a24a;letter-spacing:.2em;min-width:5em}
+  #vsLobby input{pointer-events:auto;font:inherit;font-size:15px;color:#f2e6c8;background:rgba(0,0,0,.5);border:1px solid #6d5d36;padding:9px 10px;border-radius:2px;width:11em}
+  #vsCode{text-transform:uppercase;letter-spacing:.3em;width:8em}
+  #vsCodeShow{font-size:30px;letter-spacing:.35em;color:#ffe2a0}
+  #vsRoom{display:none}
+  #vsList{list-style:none;padding:0;margin:8px 0}
+  #vsList li{padding:6px 0;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px}
+  #vsList .dot,#race .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
+  #vsStatus{min-height:1.4em;font-size:13px;color:#ffb070}
+  #vsGo[disabled]{opacity:.4;cursor:default}
+  #race{display:none;z-index:11}
+  #race .tbl{position:absolute;right:16px;top:70px;background:rgba(0,0,0,.42);border:1px solid rgba(255,255,255,.15);border-radius:3px;padding:8px 12px;font-size:13px;line-height:1.9;min-width:190px;text-shadow:0 1px 2px #000}
+  #race .tbl .t{font-size:11px;color:#c9a24a;letter-spacing:.2em}
+  #race .me{font-weight:700}
+  #race .out{color:#999;text-decoration:line-through}
+  #race .won{color:#c9e6a0}
+  #count{display:none;z-index:26;align-items:center;justify-content:center;font-size:96px;font-weight:800;letter-spacing:.1em;text-shadow:0 4px 30px #000}
+  #endRank{margin:4px 0 16px;font-size:15px;line-height:2}
+  #endRank .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
+  body.touch #race .tbl{top:auto;bottom:70px;right:calc(150px + env(safe-area-inset-right));font-size:11px;line-height:1.6;min-width:150px;padding:5px 8px}
 
   /* ---- touch devices (body.touch is set by game.js on phones and tablets) ---- */
   #touch,#rotate,#helpTouch{display:none}
@@ -125,6 +152,7 @@
   <div class="btns">
     <button id="btnPrev">◀</button><button id="btnNext">▶</button>
     <button id="btnStart">ゲーム開始</button>
+    <button id="btnVs">3人対戦</button>
   </div>
   <div id="help">WASD 移動 ／ Shift ダッシュ ／ Space ジャンプ ／ C しゃがむ（茂みに隠れる）／ マウス 視点 ／ Esc 一時停止<br>
   森の奥の救難信号（赤い煙）までたどり着けば脱出成功。ティラノは時間とともに増えていく（頭数と間隔は難易度による）。森と地割れの配置はゲームごとに変わる。<br>
@@ -154,7 +182,30 @@
 <div id="pause" class="layer"><h2>PAUSE</h2>
   <div class="sens"><span class="lbl sensLbl">マウス感度</span><input class="sensIn" type="range" min="0.2" max="3" step="0.1" aria-label="感度"><b class="sensVal"></b></div>
   <button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
-<div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
+<div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><div id="endRank"></div><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
+<!-- 3-player race: lobby, live standings, countdown -->
+<div id="vsLobby" class="layer">
+  <div class="box">
+    <h2>3人対戦</h2>
+    <p class="note">3人がそれぞれ別の地点からスタートし、最初に救難信号へたどり着いた人の勝ち。恐竜に捕まった人は脱落。難易度は「難しい」で固定。</p>
+    <div id="vsHome">
+      <label class="row"><span class="lbl">名前</span><input id="vsName" maxlength="8" placeholder="プレイヤー"></label>
+      <div class="row"><button id="vsCreate">部屋を作る</button></div>
+      <div class="row"><input id="vsCode" maxlength="5" placeholder="部屋コード" autocomplete="off"><button id="vsJoin">部屋に入る</button></div>
+    </div>
+    <div id="vsRoom">
+      <div class="row"><span class="lbl">部屋コード</span><b id="vsCodeShow"></b></div>
+      <p class="note">このコードを他の2人に伝えて、「部屋に入る」で入力してもらいます。</p>
+      <ul id="vsList"></ul>
+      <div class="row"><button id="vsGo">対戦開始</button></div>
+    </div>
+    <p id="vsStatus"></p>
+    <p class="note small">通信の仲介に PeerJS の公開サーバーを使います（部屋コードがそのサーバーを通ります）。ゲーム中のデータはプレイヤー同士で直接やり取りします。</p>
+    <div class="row"><button id="vsBack">戻る</button></div>
+  </div>
+</div>
+<div id="race" class="layer"></div>
+<div id="count" class="layer"></div>
 
 <script type="importmap">
 {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
@@ -165,7 +216,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
-const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/game.js'];
+const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/game.js'];
 for (const f of files) {
   await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
 }
