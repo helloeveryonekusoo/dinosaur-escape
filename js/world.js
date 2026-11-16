@@ -29,7 +29,7 @@
       }
       const cum = [0]; for (let i = 1; i < n; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
       const xs = pts.map(q => q.x), zs = pts.map(q => q.z), m = W.RAVINE_MARGIN + 2;
-      return { pts, cum, len: cum[n - 1], seed: 993 + k, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] };
+      return { pts, cum, len: cum[n - 1], seed: 993 + k, narrow: 0.3 + rr() * 0.4, box: [Math.min(...xs) - m, Math.max(...xs) + m, Math.min(...zs) - m, Math.max(...zs) + m] };
     };
     // distance from a point to a ravine's centre line
     const segD = (q, a, b) => { const ex = b.x - a.x, ez = b.z - a.z, l2 = ex * ex + ez * ez || 1, u = Math.max(0, Math.min(1, ((q.x - a.x) * ex + (q.z - a.z) * ez) / l2)); return Math.hypot(q.x - a.x - ex * u, q.z - a.z - ez * u); };
@@ -85,7 +85,14 @@
   };
   W.reseed((Math.random() * 1e6) | 0);
   // half-width at fraction t along the ravine: alternating narrow (≈3.5 m, jumpable) and wide (≈7.5 m) stretches
-  W.ravineHW = (rv, t) => 1.75 + 2.0 * N.smoothstep(0.42, 0.58, vnoise2(t * rv.len / 32, rv.seed, 994));
+  // Every ravine also gets one sure narrow stretch (about 12 m long, somewhere in its middle part), since a short
+  // ravine could otherwise come out wide all along.
+  W.ravineHW = (rv, t) => {
+    const base = 1.75 + 2.0 * N.smoothstep(0.42, 0.58, vnoise2(t * rv.len / 32, rv.seed, 994));
+    if (rv.narrow == null) return base;
+    const nd = Math.abs(t - rv.narrow) * rv.len; // metres from the middle of the narrow stretch
+    return nd < 6 ? 1.75 : nd < 14 ? base + (1.75 - base) * (1 - (nd - 6) / 8) : base;
+  };
   const RQ = { d: 0, t: 0, hw: 0, depth: 0, tx: 0, tz: 0, rv: null };
   // nearest ravine info at (x,z), or null when not near any
   W.ravineAt = function (x, z) {

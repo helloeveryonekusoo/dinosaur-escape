@@ -393,6 +393,12 @@
     SLP.x = (W.height(x + e, z) - W.height(x - e, z)) / (2 * e); SLP.z = (W.height(x, z + e) - W.height(x, z - e)) / (2 * e);
     SLP.m = Math.hypot(SLP.x, SLP.z); return SLP;
   }
+  // The lip of a ravine (its top 0.8 m) behaves like ordinary ground even where it is steep: you can stand on it,
+  // step up it and jump from it, so a jump that takes off at the very edge or lands just short still works.
+  // Below the lip the wall can't be climbed (see updatePlayer).
+  const LIP = 0.8;
+  const onLip = (x, z) => { const q = W.ravineAt(x, z); return !!q && q.depth <= LIP; };
+  const wallAt = (x, z) => slopeAt(x, z).m > MAX_SLOPE && !onLip(x, z);
   function updatePlayer(dt) {
     const sprintKey = keys.ShiftLeft || keys.ShiftRight || TI.run;
     let mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + TI.mx, mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + TI.mz;
@@ -407,13 +413,17 @@
     fwd.set(-Math.sin(P.yaw), 0, -Math.cos(P.yaw)); right.set(-fwd.z, 0, fwd.x);
     const wish = fwd.clone().multiplyScalar(mz).addScaledVector(right, mx); if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(spd);
     // ground steeper than 45° (ravine walls) can't be stood on: no walking up it, no jumping off it, and you slide down
-    const sl = slopeAt(P.pos.x, P.pos.z), steep = P.ground && sl.m > MAX_SLOPE;
-    if (steep) { const ux = sl.x / sl.m, uz = sl.z / sl.m, up = wish.x * ux + wish.z * uz; if (up > 0) { wish.x -= ux * up; wish.z -= uz * up; } }
+    const sl = slopeAt(P.pos.x, P.pos.z), steep = P.ground && sl.m > MAX_SLOPE && !onLip(P.pos.x, P.pos.z);
+    const sx = sl.x, sz = sl.z, sm = sl.m;
+    if (steep) { const ux = sx / sm, uz = sz / sm, up = wish.x * ux + wish.z * uz; if (up > 0) { wish.x -= ux * up; wish.z -= uz * up; } }
     const k = 1 - Math.exp(-dt * (P.ground ? 10 : 1.5));
     P.vel.x = lerp(P.vel.x, wish.x, k); P.vel.z = lerp(P.vel.z, wish.z, k);
-    if (steep) { P.vel.x -= sl.x / sl.m * 26 * dt; P.vel.z -= sl.z / sl.m * 26 * dt; }
+    if (steep) { P.vel.x -= sx / sm * 26 * dt; P.vel.z -= sz / sm * 26 * dt; }
     P.vel.y -= 22 * dt;
-    if (P.ground && !steep && !held && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; }
+    // a jump still counts for a moment after running off an edge ("coyote time"), so pressing it a little late at a
+    // ravine's lip doesn't drop you in
+    P.coyote = P.ground && !steep ? 0.12 : Math.max(0, (P.coyote || 0) - dt);
+    if ((P.ground && !steep || P.coyote > 0 && P.vel.y < 1) && !held && (keys.Space || TI.jump) && !P.crouch) { P.vel.y = 6.5; P.ground = false; P.coyote = 0; }
     const px = P.pos.x, pz = P.pos.z, g0 = W.height(px, pz);
     P.pos.addScaledVector(P.vel, dt);
     world.collide(P.pos, 0.35, P.pos.y - P.eye); // fallen logs can be jumped over
@@ -422,11 +432,12 @@
     const feet = P.pos.y - P.eye;
     const blocked = (x, z) => {
       const hd = Math.hypot(x - px, z - pz); if (hd < 1e-5) return false;
-      const g1 = W.height(x, z);
-      if (!P.ground) return g1 > feet + 0.3;
+      const g1 = W.height(x, z), lip = onLip(x, z);
+      if (!P.ground) return g1 > feet + (lip ? 0.45 : 0.3); // mid-air: a lip just above your feet can still be landed on
+      if (lip) return false;                                  // walking up a lip is fine
       if ((g1 - g0) / hd > 1.0 && g1 > feet + 0.05) return true;
       // no creeping up a wall in small sideways steps, each of which on its own looks gentle enough
-      return g1 > g0 + 0.005 && slopeAt(x, z).m > MAX_SLOPE;
+      return g1 > g0 + 0.005 && wallAt(x, z);
     };
     if (blocked(P.pos.x, P.pos.z)) { // slide along the wall: keep whichever axis is still allowed
       const nx = P.pos.x, nz = P.pos.z;
