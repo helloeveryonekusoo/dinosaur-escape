@@ -75,12 +75,12 @@
   }
   // A race: the signal goes somewhere new each time, and the three starts sit evenly round it (120° apart) at the
   // same distance, at a random turn. The signal is kept where all three starts stay clear of the mountains at the edge.
-  // A race map is larger than the single-player one (LIMIT 690 instead of 400, the mountains rising from about 670),
+  // A race map is larger than the single-player one (LIMIT 730 instead of 400, the mountains rising from about 710),
   // so the starts can be far from the signal and still well inside the forest, out of sight of the mountains.
   W.GOAL_SOLO = W.GOAL.clone();
-  W.RACE_R = 480;            // start-to-signal distance in a race
-  const RACE_EDGE = 540;     // starts no further out than this
-  const SOLO_MAP = { LIMIT: 400, SIZE: 1000 }, RACE_MAP = { LIMIT: 690, SIZE: 1600 };
+  W.RACE_R = 530;            // start-to-signal distance in a race (as far as the single-player route)
+  const RACE_EDGE = 580;     // starts no further out than this
+  const SOLO_MAP = { LIMIT: 400, SIZE: 1000 }, RACE_MAP = { LIMIT: 730, SIZE: 1700 };
   function placeRace() {
     const rr = N.rng(997 + SEED), R = W.RACE_R, a0 = rr() * Math.PI * 2;
     const off = [0, 1, 2].map(k => { const a = a0 + k * Math.PI * 2 / 3; return [Math.sin(a) * R, Math.cos(a) * R]; });

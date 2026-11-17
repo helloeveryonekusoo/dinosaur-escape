@@ -33,6 +33,15 @@
   // look sensitivity (mouse, or finger drag on touch screens): a multiplier on the turn per pixel, saved per browser
   let SENS = 1;
   try { const v = parseFloat(localStorage.getItem('dg_sens')); if (v >= 0.2 && v <= 3) SENS = v; } catch (e) { }
+  // direction hints (off by default): the signal's direction on the compass, and in a race also the other runners
+  // on it and every runner starting turned toward the signal. Single play: the player's choice on the title screen;
+  // a race: the host's choice in the room, the same for everybody.
+  let HINTS = false;
+  try { HINTS = localStorage.getItem('dg_hints') === '1'; } catch (e) { }
+  function setHints(on) {
+    HINTS = !!on; try { localStorage.setItem('dg_hints', HINTS ? '1' : '0'); } catch (e) { }
+    document.querySelectorAll('#hintBtns button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === HINTS));
+  }
   function setSens(v) {
     SENS = clamp(Math.round(v * 10) / 10, 0.2, 3); try { localStorage.setItem('dg_sens', SENS); } catch (e) { }
     document.querySelectorAll('.sensIn').forEach(i => { if (+i.value !== SENS) i.value = SENS; });
@@ -254,6 +263,8 @@
       ['keydown', 'keyup'].forEach(t => i.addEventListener(t, e => e.stopPropagation())); // arrow keys move the slider, not the player
     });
     setSens(SENS);
+    document.querySelectorAll('#hintBtns button').forEach(b => b.onclick = () => setHints(b.dataset.v === '1'));
+    setHints(HINTS);
     $('btnPrev').onclick = () => { A.init(); showDex(dexIdx - 1); };
     $('btnNext').onclick = () => { A.init(); showDex(dexIdx + 1); };
     $('btnStart').onclick = () => { A.init(); if (DG.MOBILE) goFullscreen(); beginGame(); };
@@ -681,6 +692,7 @@
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls) => { const r = wrapA(ang - P.yaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
+    if (HINTS) mk(Math.atan2(-(W.GOAL.x - P.pos.x), -(W.GOAL.z - P.pos.z)), '▼', 'gl');
     if (items.radar > 0) dinos.forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
     $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);
@@ -700,7 +712,7 @@
   // All three build the same map from the seed the host picks, and start from three points the same distance
   // from the goal. The first to reach the signal wins; anyone caught is out. The host picks the difficulty.
   const VS = {
-    inRoom: false, on: false, host: false, code: '', mySlot: 0, players: [], phase: 'idle', seed: 0, diff: 'hard',
+    inRoom: false, on: false, host: false, code: '', mySlot: 0, players: [], phase: 'idle', seed: 0, diff: 'hard', hints: false,
     countT: 0, sendT: 0, panelT: 0, raceT: 0, ready: new Set(), winner: -1, baits: [], dead: null, nRex: 0, spawnIn: 0, raceMap: false, avatars: []
   };
   const VS_COLORS = ['#e8553c', '#3c9be8', '#e8c43c'];
@@ -719,6 +731,11 @@
     if (VS.host) { try { localStorage.setItem('dg_vs_difficulty', VS.diff); } catch (e) { } sendLobby(); }
     renderLobby();
   }
+  function setVsHints(on) {
+    VS.hints = !!on;
+    if (VS.host) { try { localStorage.setItem('dg_vs_hints', VS.hints ? '1' : '0'); } catch (e) { } sendLobby(); }
+    renderLobby();
+  }
   const myName = () => { const n = $('vsName').value.trim().slice(0, 8) || 'プレイヤー'; try { localStorage.setItem('dg_name', n); } catch (e) { } return n; };
 
   function bindVersusUI() {
@@ -734,6 +751,7 @@
       b.onclick = () => { if (VS.host && VS.phase === 'lobby') setVsDiff(k); };
       $('vsDiffBtns').appendChild(b);
     });
+    document.querySelectorAll('#vsHintBtns button').forEach(b => b.onclick = () => { if (VS.host && VS.phase === 'lobby') setVsHints(b.dataset.v === '1'); });
     $('vsGo').onclick = vsStartRace;
     $('vsBack').onclick = vsLeaveRoom;
     bindSpectate();
@@ -754,6 +772,9 @@
     document.querySelectorAll('#vsDiffBtns button').forEach(b => { b.classList.toggle('on', b.dataset.k === VS.diff); b.disabled = !VS.host; });
     $('vsDiffInfo').textContent = `ティラノ：最初 ${df.count}頭 → ${df.spawnEvery}秒ごとに1頭増えて最大 ${df.max}頭 ／ 走る速さ 約${Math.round(DG.SPECIES.trex.ai.run * df.speed * 3.6)}km/h ／ ` +
       `目と耳の届く距離 ${Math.round(df.sense * 100)}% ／ 最初の発煙筒 ${df.startFlare}本` + (VS.host ? '' : '（難易度はホストが選びます）');
+    document.querySelectorAll('#vsHintBtns button').forEach(b => { b.classList.toggle('on', (b.dataset.v === '1') === VS.hints); b.disabled = !VS.host; });
+    $('vsHintInfo').textContent = (VS.hints ? 'あり：コンパスに救難信号の方向（赤い▼）とほかのプレイヤー（●）が出て、全員が救難信号の方を向いてスタート'
+      : 'なし：救難信号の方向はわからず、全員ばらばらの方向を向いてスタート（距離だけが手がかり）') + (VS.host ? '' : '（ホストが選びます）');
     const n = VS.players.filter(Boolean).length;
     $('vsGo').style.display = VS.host ? '' : 'none';
     $('vsGo').disabled = n < 2;
@@ -766,7 +787,8 @@
     try {
       const code = await DG.Net.host();
       let d = 'hard'; try { d = vsDiffKey(localStorage.getItem('dg_vs_difficulty')); } catch (e) { }
-      Object.assign(VS, { inRoom: true, host: true, code, mySlot: 0, players: [mkPlayer(0, null, myName())], phase: 'lobby', diff: d });
+      let hn = false; try { hn = localStorage.getItem('dg_vs_hints') === '1'; } catch (e) { }
+      Object.assign(VS, { inRoom: true, host: true, code, mySlot: 0, players: [mkPlayer(0, null, myName())], phase: 'lobby', diff: d, hints: hn });
       openLobby();
     } catch (e) { DG.Net.close(); vsStatus(DG.Net.why(e)); }
   }
@@ -818,7 +840,7 @@
     else { p.left = true; if (p.st === 'alive') { p.st = 'gone'; p.dist = goalDist(p.tp.pos); } VS.ready.add(p.slot); vsMaybeGo(); vsCheckEnd(); }
   }
   function sendLobby() {
-    VS.players.forEach(p => { if (p && p.id) DG.Net.send({ t: 'lobby', you: p.slot, code: VS.code, list: vsList(), diff: VS.diff }, p.id); });
+    VS.players.forEach(p => { if (p && p.id) DG.Net.send({ t: 'lobby', you: p.slot, code: VS.code, list: vsList(), diff: VS.diff, hints: VS.hints ? 1 : 0 }, p.id); });
   }
   function hostMsg(id, m) {
     const p = playerById(id);
@@ -848,12 +870,12 @@
     if (m.t === 'busy') { vsAbort(m.why || '部屋に入れませんでした'); return; }
     if (m.t === 'lobby') {
       const was = VS.inRoom;
-      VS.inRoom = true; VS.mySlot = m.you | 0; VS.code = m.code || VS.code; VS.diff = vsDiffKey(m.diff);
+      VS.inRoom = true; VS.mySlot = m.you | 0; VS.code = m.code || VS.code; VS.diff = vsDiffKey(m.diff); VS.hints = !!m.hints;
       const old = VS.players; VS.players = [];
       (m.list || []).forEach(e => { VS.players[e.s] = mkPlayer(e.s, null, e.name); if (old[e.s]) VS.players[e.s].st = old[e.s].st; });
       if (VS.phase === 'idle') VS.phase = 'lobby';
       if (!was || $('vsLobby').style.display === 'flex') openLobby(); else renderLobby();
-    } else if (m.t === 'start') { VS.diff = vsDiffKey(m.diff); vsPrepare(m.seed | 0, m.list || []); }
+    } else if (m.t === 'start') { VS.diff = vsDiffKey(m.diff); VS.hints = !!m.hints; vsPrepare(m.seed | 0, m.list || []); }
     else if (m.t === 'go') { if (VS.phase === 'loading') VS.goPending = true; else vsGo(); }
     else if (m.t === 'snap') applySnap(m);
     else if (m.t === 'took') { if (VS.on) items.take(m.i | 0, (m.s | 0) === VS.mySlot); }
@@ -867,7 +889,7 @@
   async function vsStartRace() {
     if (!VS.host || VS.phase === 'loading' || VS.players.filter(Boolean).length < 2) return;
     VS.seed = (Math.random() * 1e6) | 0;
-    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList(), diff: VS.diff });
+    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList(), diff: VS.diff, hints: VS.hints ? 1 : 0 });
     VS.ready = new Set();
     VS.players.forEach(p => { if (p && !playerConnected(p)) VS.ready.add(p.slot); });
     await vsPrepare(VS.seed, vsList());
@@ -909,8 +931,10 @@
     ['menu', 'end', 'pause', 'vsLobby'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block'; $('race').style.display = 'block';
     const st = W.STARTS[VS.mySlot] || W.START;
     P.pos.set(st.x, W.height(st.x, st.z) + 1.65, st.z); P.vel.set(0, 0, 0); P.eye = 1.65; P.ground = true;
-    P.yaw = Math.random() * Math.PI * 2; // facing any way: where the signal is has to be found out
+    // facing the signal with hints on; otherwise any way, and where the signal is has to be found out
+    P.yaw = VS.hints ? Math.atan2(-(W.GOAL.x - st.x), -(W.GOAL.z - st.z)) : Math.random() * Math.PI * 2;
     P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
+    camera.position.copy(P.pos); camera.rotation.set(0, P.yaw, 0, 'YXZ'); // already there behind the pause screen
     killer = null; runT = 0; shake = 0; VS.dead = null; VS.raceT = 0; VS.winner = -1; VS.baits = []; VS.sendT = 0; VS.panelT = 0;
     Object.assign(SPEC, { slot: -1, oy: 0, op: 0.3, dist: 7, tp: 1.1, tdist: 26, snap: true });
     // pickups anywhere round the signal, one set for everybody: the first to reach one has it
@@ -1269,7 +1293,12 @@
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls, style) => { const r = wrapA(ang - vyaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
-    // (no marks for the other runners: they start evenly round the signal, so their directions would give it away)
+    // with hints off, no marks for the signal or the other runners (they start evenly round the signal, so their
+    // directions would give it away)
+    if (VS.hints) {
+      mk(Math.atan2(-(W.GOAL.x - vp.x), -(W.GOAL.z - vp.z)), '▼', 'gl');
+      VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p !== st && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - vp.x), -(p.tp.pos.z - vp.z)), '●', '', `color:${p.color}`); });
+    }
     if (myAlive && items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
     if (!VS.dead) $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);

@@ -39,6 +39,12 @@
   .sens input{pointer-events:auto;width:200px;accent-color:#c9a24a;cursor:pointer;margin:0}
   .sens b{font-size:13px;font-weight:400;color:#f2e6c8;min-width:3.2em}
   #pause .sens{margin:6px 0 22px}
+  .toggle{display:inline-flex;gap:6px}
+  .toggle button{padding:5px 14px;font-size:13px;letter-spacing:.05em}
+  .toggle button.on,body.touch .toggle button.on{background:#c9a24a;color:#111}
+  .toggle button[disabled]{cursor:default} .toggle button[disabled]:not(.on){opacity:.45}
+  .toggle button[disabled]:not(.on):hover{background:rgba(20,18,12,.7);color:#f2e6c8}
+  .hintNote{font-size:11px;color:#aaa;letter-spacing:.02em}
   #hud{display:none;z-index:10}
   #stam{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);width:260px;height:5px;background:rgba(255,255,255,.15);border-radius:3px}
   #stam i{display:block;height:100%;width:100%;background:#e8e2cf;border-radius:3px}
@@ -46,6 +52,7 @@
   #compass{position:absolute;top:44px;left:50%;transform:translateX(-50%);width:360px;height:22px;overflow:hidden;
            mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 20%,#000 80%,transparent)}
   #compass .mk{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:#ddd;text-shadow:0 1px 3px #000}
+  #compass .gl{color:#ff5a3c;font-size:16px}
   #compass .dn{color:#ffb070;font-size:12px;white-space:nowrap}
   #inv{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);display:flex;gap:6px;align-items:flex-end}
   #inv .slot{position:relative;width:46px;height:46px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);border-radius:4px;
@@ -146,7 +153,7 @@
     #menu{padding:10px calc(4vw + env(safe-area-inset-right)) 12px calc(4vw + env(safe-area-inset-left));justify-content:center}
     #dexInfo{min-height:0;margin-top:6px;max-width:none} #dexInfo .nm{font-size:16px;display:inline} #dexInfo .sci{display:inline;font-size:12px;margin:0 0 0 8px} #dexInfo .ds,#dexInfo .st{display:none}
     #diff{margin-top:8px;gap:8px} #diffBtns{gap:6px} #diffBtns button{padding:7px 11px;font-size:12px;letter-spacing:.05em}
-    #diffInfo{font-size:11px;line-height:1.5;margin-top:6px} .sens{margin-top:6px} .sens input{width:160px} #pause .sens{margin:0 0 12px} #menu .btns{margin-top:8px} #menu .btns button{padding:9px 22px;font-size:14px}
+    #diffInfo{font-size:11px;line-height:1.5;margin-top:6px} .sens{margin-top:6px} .sens input{width:160px} .hintNote{display:none} .toggle button{padding:4px 11px;font-size:12px} #pause .sens{margin:0 0 12px} #menu .btns{margin-top:8px} #menu .btns button{padding:9px 22px;font-size:14px}
     body.touch #helpTouch{font-size:11px;line-height:1.5;margin-top:8px}
     #credits{font-size:11px;right:10px;bottom:4px;max-width:60vw;line-height:1.3}
     #end h2{font-size:30px} #end p{font-size:13px;margin:8px 12px;text-align:center} #end button,#pause button{padding:9px 22px}
@@ -165,6 +172,7 @@
   <div id="dexInfo"></div>
   <div id="diff"><span class="lbl">難易度</span><span id="diffBtns"></span></div>
   <div id="diffInfo"></div>
+  <div class="sens"><span class="lbl">方向のヒント</span><span class="toggle" id="hintBtns"><button data-v="1">あり</button><button data-v="0">なし</button></span><span class="hintNote">あり：コンパスに救難信号の方向（赤い▼）が出る</span></div>
   <div class="sens"><span class="lbl sensLbl">マウス感度</span><input class="sensIn" type="range" min="0.2" max="3" step="0.1" aria-label="感度"><b class="sensVal"></b></div>
   <div class="btns">
     <button id="btnPrev">◀</button><button id="btnNext">▶</button>
@@ -204,7 +212,7 @@
 <div id="vsLobby" class="layer">
   <div class="box">
     <h2>3人対戦</h2>
-    <p class="note">3人は救難信号を囲むように同じ距離の別々の地点から、ばらばらの方向を向いてスタート（信号の位置は毎回変わり、方向は表示されません）。最初に救難信号へたどり着いた人の勝ち。アイテムは早い者勝ち。恐竜に捕まった人は脱落し、残りの人を好きな視点で観戦できます。難易度は部屋を作った人が選びます。</p>
+    <p class="note">3人は救難信号を囲むように同じ距離の別々の地点から、スタート（信号の位置は毎回変わります）。最初に救難信号へたどり着いた人の勝ち。アイテムは早い者勝ち。恐竜に捕まった人は脱落し、残りの人を好きな視点で観戦できます。難易度は部屋を作った人が選びます。</p>
     <div id="vsHome">
       <label class="row"><span class="lbl">名前</span><input id="vsName" maxlength="8" placeholder="プレイヤー"></label>
       <div class="row"><button id="vsCreate">部屋を作る</button></div>
@@ -216,6 +224,8 @@
       <ul id="vsList"></ul>
       <div class="row"><span class="lbl">難易度</span><span id="vsDiffBtns"></span></div>
       <p id="vsDiffInfo" class="note"></p>
+      <div class="row"><span class="lbl">方向のヒント</span><span class="toggle" id="vsHintBtns"><button data-v="1">あり</button><button data-v="0">なし</button></span></div>
+      <p id="vsHintInfo" class="note"></p>
       <div class="row"><button id="vsGo">対戦開始</button></div>
     </div>
     <p id="vsStatus"></p>
