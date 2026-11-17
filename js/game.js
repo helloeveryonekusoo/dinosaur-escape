@@ -214,6 +214,9 @@
     });
     const lookEnd = e => { if (e.pointerId === lid) lid = null; };
     cv.addEventListener('pointerup', lookEnd); cv.addEventListener('pointercancel', lookEnd);
+    // forget any finger still marked as down when the controls are hidden (caught mid-run, the race ended…):
+    // its 'up' may never arrive, and a stale finger would lock the stick for the next game
+    TI.reset = () => { sid = null; lid = null; TI.mx = TI.mz = 0; TI.jump = false; knob.style.transform = ''; base.classList.remove('on'); base.style.left = base.style.top = ''; };
     const press = (id, down, up) => {
       const b = $(id);
       b.addEventListener('pointerdown', e => { e.preventDefault(); if (state === 'play') down(b); });
@@ -229,7 +232,7 @@
   let touchShown = null;
   function touchUI() { // show the controls only while playing; keep the toggle buttons in step with the game
     const on = state === 'play';
-    if (on !== touchShown) { touchShown = on; $('touch').style.display = on ? 'block' : 'none'; if (!on) { TI.mx = TI.mz = 0; TI.jump = false; } }
+    if (on !== touchShown) { touchShown = on; $('touch').style.display = on ? 'block' : 'none'; if (!on) { TI.mx = TI.mz = 0; TI.jump = false; if (TI.reset) TI.reset(); } }
     if (on) { $('tRun').classList.toggle('on', TI.run); $('tCrouch').classList.toggle('on', P.crouch); }
   }
   function goFullscreen() { // best effort: fill the screen and hold it sideways (not available on every phone)
@@ -678,7 +681,6 @@
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls) => { const r = wrapA(ang - P.yaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
-    mk(Math.atan2(-(W.GOAL.x - P.pos.x), -(W.GOAL.z - P.pos.z)), '▼', 'gl');
     if (items.radar > 0) dinos.forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
     $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);
@@ -874,6 +876,7 @@
   // build the race map from the host's seed (everyone ends up with exactly the same trees, rocks and ravines)
   async function vsPrepare(seed, list) {
     VS.phase = 'loading'; VS.seed = seed; VS.on = false; VS.goPending = false;
+    state = 'wait'; VS.dead = null; // someone still on the last race's results (maybe out, with no single-player killer) just waits
     const old = VS.players; VS.players = []; // exactly the players in this race (someone may have left the room since)
     list.forEach(e => { VS.players[e.s] = old[e.s] && old[e.s].name === String(e.name).slice(0, 8) ? old[e.s] : mkPlayer(e.s, null, e.name); });
     ['menu', 'end', 'pause', 'vsLobby', 'hud'].forEach(id => $(id).style.display = 'none');
@@ -909,6 +912,7 @@
     Object.assign(SPEC, { slot: -1, oy: 0, op: 0.3, dist: 7, tp: 1.1, tdist: 26, snap: true });
     items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS });
     LOCAL.slot = VS.mySlot;
+    for (const k in keys) keys[k] = false; // nothing still held from the last race (or from watching it)
     VS.players.forEach(p => {
       if (!p) return;
       p.st = !VS.host || playerConnected(p) ? 'alive' : 'gone'; p.time = 0;
@@ -1245,7 +1249,6 @@
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls, style) => { const r = wrapA(ang - vyaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
-    mk(Math.atan2(-(W.GOAL.x - vp.x), -(W.GOAL.z - vp.z)), '▼', 'gl');
     VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p !== st && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - vp.x), -(p.tp.pos.z - vp.z)), '●', '', `color:${p.color}`); });
     if (myAlive && items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
@@ -1273,7 +1276,9 @@
   const live = () => VS.phase === 'race';
 
   // ---------------- main loop ----------------
-  function loop() { tick(Math.min(clock.getDelta(), 1 / 20)); }
+  // three.js asks for the next frame only after this returns, so an error here would freeze the game for good:
+  // report it and carry on with the next frame instead
+  function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   function tick(dt) {
     T += dt; if (DG.MOBILE) touchUI();
@@ -1302,7 +1307,7 @@
       world.update(dt, T, P.pos);
       A.listener(camera.position, camera.getWorldDirection(new V()));
       hud(dt, clamp(threat, 0, 1));
-    } else if (state === 'dead') {
+    } else if (state === 'dead' && killer) { // (a race has its own catch camera, without a single-player killer)
       deadT += dt;
       if (deadT >= 0.9 && deadT - dt < 0.9) killer.d.roar(2.2); // roar over the victim
       dinos.forEach(a => { if (a !== killer && a.d.root.visible) updateDino(a, dt, false); });
