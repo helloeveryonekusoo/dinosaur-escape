@@ -98,6 +98,18 @@
   #count{display:none;z-index:26;align-items:center;justify-content:center;font-size:96px;font-weight:800;letter-spacing:.1em;text-shadow:0 4px 30px #000}
   #endRank{margin:4px 0 16px;font-size:15px;line-height:2}
   #endRank .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
+  #spec{display:none;z-index:13}
+  #spec .bar{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);pointer-events:auto;text-align:center;
+             background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.15);border-radius:3px;padding:8px 12px;text-shadow:0 1px 2px #000;max-width:calc(100vw - 24px)}
+  #spec .row{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+  #spec .row+.row{margin-top:6px}
+  #spec button{padding:5px 12px;font-size:13px;letter-spacing:.05em}
+  #spec button.on{background:#c9a24a;color:#111}
+  #specWho{min-width:11em;font-size:14px;font-weight:700}
+  #specWho .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
+  #specHint{font-size:11px;color:#bbb;margin-top:5px}
+  body.touch #spec .bar{bottom:8px;padding:5px 8px} body.touch #spec button{padding:5px 9px;font-size:12px}
+  body.touch.watching #race .tbl{bottom:auto;top:64px} /* out of the watch bar's way */
   body.touch #race .tbl{top:auto;bottom:70px;right:calc(150px + env(safe-area-inset-right));font-size:11px;line-height:1.6;min-width:150px;padding:5px 8px}
 
   /* ---- touch devices (body.touch is set by game.js on phones and tablets) ---- */
@@ -193,7 +205,7 @@
 <div id="vsLobby" class="layer">
   <div class="box">
     <h2>3人対戦</h2>
-    <p class="note">3人がそれぞれ別の地点からスタートし、最初に救難信号へたどり着いた人の勝ち。恐竜に捕まった人は脱落。難易度は部屋を作った人が選びます。</p>
+    <p class="note">3人がそれぞれ別の地点からスタートし、最初に救難信号へたどり着いた人の勝ち。恐竜に捕まった人は脱落し、残りの人を好きな視点で観戦できます。難易度は部屋を作った人が選びます。</p>
     <div id="vsHome">
       <label class="row"><span class="lbl">名前</span><input id="vsName" maxlength="8" placeholder="プレイヤー"></label>
       <div class="row"><button id="vsCreate">部屋を作る</button></div>
@@ -213,6 +225,11 @@
   </div>
 </div>
 <div id="race" class="layer"></div>
+<div id="spec" class="layer"><div class="bar">
+  <div class="row"><button id="specPrev" aria-label="前のプレイヤー">◀</button><span id="specWho"></span><button id="specNext" aria-label="次のプレイヤー">▶</button></div>
+  <div class="row" id="specModes"><button data-m="fp">本人の目線</button><button data-m="back">後ろから</button><button data-m="top">上空から</button></div>
+  <div id="specHint"></div>
+</div></div>
 <div id="count" class="layer"></div>
 
 <script type="importmap">

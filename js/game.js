@@ -96,7 +96,7 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, TREX, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
+    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, SPEC, TREX, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -261,6 +261,7 @@
     bindVersusUI();
     addEventListener('keydown', e => {
       keys[e.code] = true; if (e.code === 'KeyC') P.crouch = !P.crouch; if (e.code === 'Space') e.preventDefault();
+      if (VS.on && !e.repeat) specKey(e.code);
       if (state === 'play') { const m = /^Digit([1-6])$/.exec(e.code); if (m) items.select(+m[1] - 1); if (e.code === 'KeyF') items.use(); }
     });
     addEventListener('mousedown', e => { if (e.button === 0 && state === 'play' && document.pointerLockElement === renderer.domElement) items.use(); });
@@ -704,7 +705,7 @@
   const ST_CODE = { alive: 0, dead: 1, goal: 2, gone: 3 }, CODE_ST = ['alive', 'dead', 'goal', 'gone'];
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const goalDist = p => Math.hypot(W.GOAL.x - p.x, W.GOAL.z - p.z);
-  const mkPlayer = (slot, id, name) => ({ slot, id, name: String(name || 'プレイヤー').slice(0, 8), color: VS_COLORS[slot], st: 'alive', dist: 0, time: 0, yaw: 0, cr: false,
+  const mkPlayer = (slot, id, name) => ({ slot, id, name: String(name || 'プレイヤー').slice(0, 8), color: VS_COLORS[slot], st: 'alive', dist: 0, time: 0, yaw: 0, pitch: 0, cr: false,
     tp: { pos: new V(), vis: 1, noise: 0, local: false, slot } });
   const vsList = () => VS.players.filter(Boolean).map(p => ({ s: p.slot, name: p.name }));
   const vsStatus = t => { $('vsStatus').textContent = t || ''; };
@@ -733,6 +734,7 @@
     });
     $('vsGo').onclick = vsStartRace;
     $('vsBack').onclick = vsLeaveRoom;
+    bindSpectate();
     DG.Net.on(onNet);
   }
   function openLobby() {
@@ -784,7 +786,7 @@
     const hadRace = VS.raceMap;
     Object.assign(VS, { inRoom: false, on: false, host: false, code: '', players: [], phase: 'idle', raceMap: false, dead: null });
     VS.avatars.forEach(g => g.visible = false);
-    $('vsLobby').style.display = 'none'; $('race').style.display = 'none'; $('count').style.display = 'none';
+    $('vsLobby').style.display = 'none'; $('race').style.display = 'none'; $('count').style.display = 'none'; $('spec').style.display = 'none'; SPEC.shown = false; document.body.classList.remove('watching');
     $('btnRetry').textContent = 'もう一度'; $('btnTitle').textContent = 'タイトルへ'; $('endRank').innerHTML = ''; vsStatus('');
     setDiff(diffKey); toMenu();
     if (hadRace) newMap(); // the race map has no glade for the title screen and three starts; build a normal one
@@ -795,7 +797,7 @@
     VS.on = false; VS.phase = 'lobby'; VS.dead = null;
     VS.avatars.forEach(g => g.visible = false);
     if (VS.host) { VS.players.forEach((p, i) => { if (p && p.left) VS.players[i] = undefined; }); sendLobby(); } // free the seats of those who left
-    $('race').style.display = 'none'; $('count').style.display = 'none'; $('endRank').innerHTML = '';
+    $('race').style.display = 'none'; $('count').style.display = 'none'; $('spec').style.display = 'none'; SPEC.shown = false; document.body.classList.remove('watching'); $('endRank').innerHTML = '';
     $('btnRetry').textContent = 'もう一度'; $('btnTitle').textContent = 'タイトルへ';
     setDiff(diffKey); toMenu(); openLobby();
   }
@@ -828,7 +830,7 @@
     if (!p) return;
     if (m.t === 'ready') { VS.ready.add(p.slot); vsMaybeGo(); }
     else if (m.t === 'me' && p.st === 'alive') {
-      p.tp.pos.set(+m.x || 0, +m.y || 0, +m.z || 0); p.tp.vis = clamp(+m.v || 0, 0, 1); p.tp.noise = clamp(+m.n || 0, 0, 1); p.yaw = +m.yaw || 0; p.cr = !!m.cr;
+      p.tp.pos.set(+m.x || 0, +m.y || 0, +m.z || 0); p.tp.vis = clamp(+m.v || 0, 0, 1); p.tp.noise = clamp(+m.n || 0, 0, 1); p.yaw = +m.yaw || 0; p.pitch = clamp(+m.pt || 0, -1.5, 1.5); p.cr = !!m.cr;
     } else if (m.t === 'lure' && VS.phase === 'race') {
       const pos = new V(+m.x || 0, +m.y || 0, +m.z || 0);
       const bait = m.kind === 'meat' ? { pos, eaten: false, remote: true } : { pos, t: DF.flareTime, remote: true, get dead() { return this.t <= 0; } };
@@ -904,6 +906,7 @@
     P.pos.set(st.x, W.height(st.x, st.z) + 1.65, st.z); P.vel.set(0, 0, 0); P.eye = 1.65; P.ground = true;
     P.yaw = Math.atan2(-(W.GOAL.x - st.x), -(W.GOAL.z - st.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
     killer = null; runT = 0; shake = 0; VS.dead = null; VS.raceT = 0; VS.winner = -1; VS.baits = []; VS.sendT = 0; VS.panelT = 0;
+    Object.assign(SPEC, { slot: -1, oy: 0, op: 0.3, dist: 7, tp: 1.1, tdist: 26, snap: true });
     items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS });
     LOCAL.slot = VS.mySlot;
     VS.players.forEach(p => {
@@ -957,7 +960,7 @@
     const k = 1 - Math.exp(-dt * 12);
     VS.avatars.forEach(g => {
       const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
-      g.visible = p.st === 'alive' || p.st === 'goal';
+      g.visible = (p.st === 'alive' || p.st === 'goal') && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive()); // not in our own way when looking through their eyes
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
       g.position.y = W.height(g.position.x, g.position.z);
       g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr ? 0.62 : 1, k);
@@ -967,7 +970,7 @@
   // ---- host: sending the state of the race; guest: applying it ----
   function sendSnap() {
     const p = [];
-    VS.players.forEach(pl => { if (!pl) return; const q = pl.tp.pos; p.push([pl.slot, +q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2), +pl.yaw.toFixed(3), pl.cr ? 1 : 0, ST_CODE[pl.st] | 0]); });
+    VS.players.forEach(pl => { if (!pl) return; const q = pl.tp.pos; p.push([pl.slot, +q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2), +pl.yaw.toFixed(3), pl.cr ? 1 : 0, ST_CODE[pl.st] | 0, +(pl.pitch || 0).toFixed(3)]); });
     const d = [];
     TREX().forEach((a, k) => {
       if (!a.d.root.visible) return;
@@ -979,7 +982,7 @@
   function applySnap(m) {
     (m.p || []).forEach(e => {
       const pl = VS.players[e[0]]; if (!pl || e[0] === VS.mySlot) return;
-      pl.tp.pos.set(e[1], e[2], e[3]); pl.yaw = e[4]; pl.cr = !!e[5];
+      pl.tp.pos.set(e[1], e[2], e[3]); pl.yaw = e[4]; pl.cr = !!e[5]; pl.pitch = +e[7] || 0;
       const st = CODE_ST[e[6]] || 'alive'; if (st !== 'alive' && pl.st === 'alive') pl.dist = goalDist(pl.tp.pos); pl.st = st;
     });
     const trex = TREX(); trex.forEach(a => a.netOn = false);
@@ -1092,7 +1095,7 @@
     if (live) VS.raceT += dt;
     // my runner
     if (me && me.st === 'alive' && (VS.phase === 'count' || live) && state === 'play') { runT += dt; updatePlayer(dt); items.update(dt, T); }
-    me && (me.tp === LOCAL) && (me.yaw = P.yaw, me.cr = P.crouch);
+    me && (me.tp === LOCAL) && (me.yaw = P.yaw, me.pitch = P.pitch, me.cr = P.crouch);
     // the dinosaurs
     let threat = 0;
     if (VS.host) {
@@ -1105,7 +1108,7 @@
     } else {
       followSnap(dt);
       VS.sendT -= dt;
-      if (VS.sendT <= 0 && me && me.st === 'alive' && VS.phase !== 'end') { VS.sendT = 0.1; DG.Net.send({ t: 'me', x: +P.pos.x.toFixed(2), y: +P.pos.y.toFixed(2), z: +P.pos.z.toFixed(2), yaw: +P.yaw.toFixed(3), cr: P.crouch ? 1 : 0, n: +P.noise.toFixed(2), v: +P.vis.toFixed(2) }); }
+      if (VS.sendT <= 0 && me && me.st === 'alive' && VS.phase !== 'end') { VS.sendT = 0.1; DG.Net.send({ t: 'me', x: +P.pos.x.toFixed(2), y: +P.pos.y.toFixed(2), z: +P.pos.z.toFixed(2), yaw: +P.yaw.toFixed(3), pt: +P.pitch.toFixed(3), cr: P.crouch ? 1 : 0, n: +P.noise.toFixed(2), v: +P.vis.toFixed(2) }); }
       TREX().forEach(a => { if (a.d.root.visible && a.hunting === VS.mySlot) threat = Math.max(threat, 1 - a.pos.distanceTo(P.pos) / 45); });
     }
     updateAvatars(dt);
@@ -1124,17 +1127,107 @@
     } else if (me && me.st === 'goal') spectate(dt);
     world.update(dt, T, VS.dead || (me && me.st !== 'alive') ? camera.position : P.pos);
     A.listener(camera.position, camera.getWorldDirection(cv0));
+    specUI();
     vsHud(dt, clamp(threat, 0, 1));
   }
+  // ---- watching the others once you are out (or home): pick whom to watch and from where ----
+  // fp: through their eyes, back: from behind them (drag to swing around), top: from above (drag to turn, wheel to zoom)
+  const SPEC = { slot: -1, mode: 'back', oy: 0, op: 0.3, dist: 7, ty: 0, tp: 1.1, tdist: 26, pos: new V(), yaw: 0, pitch: 0, snap: true, shown: false, key: '' };
+  const SPEC_MODES = ['fp', 'back', 'top'];
+  const specTargets = () => VS.players.filter(p => p && p.st === 'alive' && p.slot !== VS.mySlot);
+  function specActive() {
+    const me = VS.players[VS.mySlot];
+    return VS.on && VS.phase === 'race' && (VS.dead ? VS.dead.t >= 3 : !!me && me.st === 'goal');
+  }
+  function specCur() {
+    const list = specTargets();
+    let t = list.find(p => p.slot === SPEC.slot);
+    if (!t && list.length) {
+      const lost = SPEC.slot >= 0 && VS.players[SPEC.slot];
+      t = list.slice().sort((a, b) => goalDist(a.tp.pos) - goalDist(b.tp.pos))[0];
+      if (lost) msg(`${lost.name} は${lost.st === 'goal' ? 'ゴールした' : lost.st === 'gone' ? '切断した' : '脱落した'} → ${t.name} を観戦`, 3);
+      SPEC.slot = t.slot; SPEC.snap = true;
+    }
+    return t || null;
+  }
+  function specSwitch(step) {
+    const list = specTargets(); if (!list.length) return;
+    const i = list.findIndex(p => p.slot === SPEC.slot);
+    const t = list[((i < 0 ? 0 : i + step) % list.length + list.length) % list.length];
+    if (t.slot !== SPEC.slot) { SPEC.slot = t.slot; SPEC.snap = true; SPEC.ty = t.yaw; }
+  }
+  function specMode(m) {
+    if (!SPEC_MODES.includes(m)) return;
+    SPEC.mode = m; SPEC.oy = 0;
+    const t = specCur(); if (t) SPEC.ty = t.yaw;
+    try { localStorage.setItem('dg_spec_mode', m); } catch (e) { }
+  }
+  function bindSpectate() {
+    try { const m = localStorage.getItem('dg_spec_mode'); if (SPEC_MODES.includes(m)) SPEC.mode = m; } catch (e) { }
+    $('specPrev').onclick = () => specSwitch(-1);
+    $('specNext').onclick = () => specSwitch(1);
+    document.querySelectorAll('#specModes button').forEach(b => b.onclick = () => specMode(b.dataset.m));
+    $('specHint').textContent = DG.MOBILE ? 'ドラッグで回転（後ろから・上空から）' : '← → / A D 切り替え ／ V・1〜3 視点 ／ ドラッグで回転 ／ ホイールで距離';
+    const cv = renderer.domElement; let id = null, lx = 0, ly = 0;
+    cv.addEventListener('pointerdown', e => { if (!specActive() || id !== null) return; id = e.pointerId; lx = e.clientX; ly = e.clientY; try { cv.setPointerCapture(id); } catch (er) { } });
+    cv.addEventListener('pointermove', e => {
+      if (e.pointerId !== id) return;
+      const k = (DG.MOBILE ? 0.006 : 0.005) * SENS, dx = (e.clientX - lx) * k, dy = (e.clientY - ly) * k; lx = e.clientX; ly = e.clientY;
+      if (SPEC.mode === 'back') { SPEC.oy -= dx; SPEC.op = clamp(SPEC.op + dy, -0.15, 1.3); }
+      else if (SPEC.mode === 'top') { SPEC.ty -= dx; SPEC.tp = clamp(SPEC.tp + dy, 0.45, 1.5); }
+    });
+    const end = e => { if (e.pointerId === id) id = null; };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+    addEventListener('wheel', e => {
+      if (!specActive()) return;
+      const f = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+      if (SPEC.mode === 'back') SPEC.dist = clamp(SPEC.dist * f, 3, 22); else if (SPEC.mode === 'top') SPEC.tdist = clamp(SPEC.tdist * f, 12, 90);
+    }, { passive: true });
+  }
+  function specKey(code) {
+    if (!specActive()) return;
+    if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyQ') specSwitch(-1);
+    else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyE') specSwitch(1);
+    else if (code === 'KeyV' || code === 'Space') specMode(SPEC_MODES[(SPEC_MODES.indexOf(SPEC.mode) + 1) % SPEC_MODES.length]);
+    else { const m = /^Digit([1-3])$/.exec(code); if (m) specMode(SPEC_MODES[+m[1] - 1]); }
+  }
+  function specUI() {
+    const on = specActive(), t = on ? specCur() : null;
+    if (on !== SPEC.shown) { SPEC.shown = on; $('spec').style.display = on ? 'block' : 'none'; document.body.classList.toggle('watching', on); SPEC.key = ''; }
+    if (!on) return;
+    const n = specTargets().length, key = (t ? t.slot : -1) + SPEC.mode + n;
+    if (key === SPEC.key) return; SPEC.key = key;
+    $('specWho').innerHTML = t ? `<span class="dot" style="background:${t.color}"></span>${esc(t.name)} を観戦中` : '観戦できるプレイヤーがいません';
+    $('specPrev').style.visibility = $('specNext').style.visibility = n > 1 ? '' : 'hidden';
+    document.querySelectorAll('#specModes button').forEach(b => b.classList.toggle('on', b.dataset.m === SPEC.mode));
+  }
+  const specQ = new THREE.Quaternion(), specE = new THREE.Euler(0, 0, 0, 'YXZ'), specM = new THREE.Matrix4(), UP = new V(0, 1, 0);
   function spectate(dt) {
-    const alive = VS.players.filter(p => p && p.st === 'alive' && p.slot !== VS.mySlot).sort((a, b) => goalDist(a.tp.pos) - goalDist(b.tp.pos));
-    const t = alive[0];
-    let want, look;
-    if (t) { const q = t.tp.pos; want = new V(q.x + Math.sin(t.yaw) * 7, q.y + 2.6, q.z + Math.cos(t.yaw) * 7); look = new V(q.x, q.y - 0.2, q.z); }
-    else { want = new V(W.GOAL.x + 30, W.height(W.GOAL.x, W.GOAL.z) + 40, W.GOAL.z + 60); look = new V(W.GOAL.x, W.height(W.GOAL.x, W.GOAL.z), W.GOAL.z); }
-    want.y = Math.max(want.y, W.height(want.x, want.z) + 1.5);
-    camera.position.lerp(want, 1 - Math.exp(-dt * 3));
-    const m4 = new THREE.Matrix4().lookAt(camera.position, look, new V(0, 1, 0)); camera.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(m4), 1 - Math.exp(-dt * 5));
+    const t = specCur();
+    let want, look = null;
+    if (t) {
+      const q = t.tp.pos, k = 1 - Math.exp(-dt * 10);
+      if (SPEC.snap) { SPEC.pos.copy(q); SPEC.yaw = t.yaw; SPEC.pitch = t.pitch || 0; SPEC.snap = false; }
+      SPEC.pos.lerp(q, k); SPEC.yaw = wrapA(SPEC.yaw + wrapA(t.yaw - SPEC.yaw) * k); SPEC.pitch = lerp(SPEC.pitch, t.pitch || 0, k);
+      const s = SPEC.pos;
+      if (SPEC.mode === 'fp') {
+        want = s.clone();
+        specE.set(SPEC.pitch, SPEC.yaw, 0); specQ.setFromEuler(specE);
+      } else if (SPEC.mode === 'top') {
+        const a = SPEC.ty, d = SPEC.tdist;
+        want = new V(s.x + Math.sin(a) * Math.cos(SPEC.tp) * d, s.y + Math.sin(SPEC.tp) * d, s.z + Math.cos(a) * Math.cos(SPEC.tp) * d);
+        look = new V(s.x, s.y - 1, s.z);
+      } else {
+        const a = SPEC.yaw + SPEC.oy, d = SPEC.dist;
+        want = new V(s.x + Math.sin(a) * Math.cos(SPEC.op) * d, s.y + 0.4 + Math.sin(SPEC.op) * d, s.z + Math.cos(a) * Math.cos(SPEC.op) * d);
+        look = new V(s.x, s.y - 0.3, s.z);
+      }
+    } else { want = new V(W.GOAL.x + 30, W.height(W.GOAL.x, W.GOAL.z) + 40, W.GOAL.z + 60); look = new V(W.GOAL.x, W.height(W.GOAL.x, W.GOAL.z), W.GOAL.z); }
+    if (!(t && SPEC.mode === 'fp')) want.y = Math.max(want.y, W.height(want.x, want.z) + 1.2);
+    const far = camera.position.distanceTo(want) > 60; // a new target far away: cut instead of flying across the map
+    camera.position.lerp(want, far ? 1 : 1 - Math.exp(-dt * (t && SPEC.mode === 'fp' ? 14 : 5)));
+    if (look) { specM.lookAt(camera.position, look, UP); specQ.setFromRotationMatrix(specM); }
+    camera.quaternion.slerp(specQ, far ? 1 : 1 - Math.exp(-dt * (t && SPEC.mode === 'fp' ? 16 : 7)));
     $('vign').style.opacity = 0;
   }
   function vsHud(dt, threat) {
@@ -1142,16 +1235,19 @@
     const myAlive = me && me.st === 'alive';
     const gd = goalDist(P.pos);
     ['inv', 'stam', 'cross', 'status'].forEach(id => $(id).style.visibility = myAlive ? '' : 'hidden'); // nothing to hold while watching
-    $('dist').textContent = myAlive ? Math.round(gd) : '—';
+    // while watching someone, the compass and the distance are theirs, turned the way the camera looks
+    const st = !myAlive && specActive() ? specCur() : null;
+    const vp = st ? SPEC.pos : P.pos, vyaw = st ? Math.atan2(-camera.getWorldDirection(cv0).x, -cv0.z) : P.yaw;
+    $('dist').textContent = myAlive ? Math.round(gd) : st ? Math.round(goalDist(st.tp.pos)) : '—';
     const n = VS.host ? roster.filter(a => a.d.root.visible).length : VS.nRex, sp = VS.host ? (SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1) : VS.spawnIn;
     $('rexn').textContent = `🦖×${n}` + (sp > 0 ? `（次の出現まで ${sp}秒）` : '') + `　【${VD().name}・3人対戦】`;
     // compass: north/south…, the signal, and the other runners
     const c = $('compass'); let h = '';
-    const mk = (ang, label, cls, style) => { const r = wrapA(ang - P.yaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
+    const mk = (ang, label, cls, style) => { const r = wrapA(ang - vyaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
-    mk(Math.atan2(-(W.GOAL.x - P.pos.x), -(W.GOAL.z - P.pos.z)), '▼', 'gl');
-    VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - P.pos.x), -(p.tp.pos.z - P.pos.z)), '●', '', `color:${p.color}`); });
-    if (items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
+    mk(Math.atan2(-(W.GOAL.x - vp.x), -(W.GOAL.z - vp.z)), '▼', 'gl');
+    VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p !== st && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - vp.x), -(p.tp.pos.z - vp.z)), '●', '', `color:${p.color}`); });
+    if (myAlive && items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
     if (!VS.dead) $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);
     heartT -= dt; if (myAlive && threat > 0.05 && heartT < 0) { A.heart(0.3 + threat * 0.7); heartT = 1.1 - threat * 0.65; }
