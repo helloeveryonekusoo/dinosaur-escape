@@ -17,7 +17,7 @@
   // Many short ravines (90-150 m) scattered between the start and the goal, roughly across the way, so they have to
   // be jumped at a narrow spot or walked round. In the 3-player race (versus) every start's straight line to the goal
   // must cross the same number of them, so no runner gets an easier route.
-  const RAVINE_N = 7, RAVINE_N_VS = 9, RAVINE_GAP = 2 * 9 + 27; // centre lines at least this far apart (strips never meet)
+  const RAVINE_N = 7, RAVINE_N_VS = 12, RAVINE_GAP = 2 * 9 + 27; // centre lines at least this far apart (strips never meet)
   function makeRavines(versus) {
     const rr = N.rng(991 + SEED);
     const mk = (c, ang, L, k) => {
@@ -75,9 +75,12 @@
   }
   // A race: the signal goes somewhere new each time, and the three starts sit evenly round it (120° apart) at the
   // same distance, at a random turn. The signal is kept where all three starts stay clear of the mountains at the edge.
+  // A race map is larger than the single-player one (LIMIT 690 instead of 400, the mountains rising from about 670),
+  // so the starts can be far from the signal and still well inside the forest, out of sight of the mountains.
   W.GOAL_SOLO = W.GOAL.clone();
-  W.RACE_R = 310;            // start-to-signal distance in a race
-  const RACE_EDGE = 355;     // starts no further out than this (the mountains rise from about 380)
+  W.RACE_R = 480;            // start-to-signal distance in a race
+  const RACE_EDGE = 540;     // starts no further out than this
+  const SOLO_MAP = { LIMIT: 400, SIZE: 1000 }, RACE_MAP = { LIMIT: 690, SIZE: 1600 };
   function placeRace() {
     const rr = N.rng(997 + SEED), R = W.RACE_R, a0 = rr() * Math.PI * 2;
     const off = [0, 1, 2].map(k => { const a = a0 + k * Math.PI * 2 / 3; return [Math.sin(a) * R, Math.cos(a) * R]; });
@@ -88,6 +91,7 @@
   }
   W.reseed = function (seed, versus) {
     SEED = seed | 0; W.seed = SEED; W.VERSUS = !!versus;
+    Object.assign(W, versus ? RACE_MAP : SOLO_MAP);
     if (versus) W.STARTS = placeRace();
     else { W.GOAL.copy(W.GOAL_SOLO); W.STARTS = [W.START]; }
     W.RAVINES = makeRavines(!!versus);
@@ -129,7 +133,7 @@
   W.height = function (x, z) {
     let h = (fbm2(x / 260 + 10, z / 260 + 10, 101, 4) - 0.5) * 34 + (fbm2(x / 70, z / 70, 102, 3) - 0.5) * 7;
     const e = Math.max(Math.abs(x), Math.abs(z));
-    h += N.smoothstep(380, 490, e) * 70 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
+    h += N.smoothstep(W.LIMIT - 20, W.LIMIT + 90, e) * 70 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
     // gentle basins at start and goal
     for (const p of W.STARTS) { const d = Math.hypot(x - p.x, z - p.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
     { const d = Math.hypot(x - W.GOAL.x, z - W.GOAL.z); h = h * (0.35 + 0.65 * N.smoothstep(10, 60, d)); }
@@ -271,7 +275,7 @@
     scene.add(new THREE.HemisphereLight(0xc4d6ea, 0x545038, 0.5)); // sky fill, so shade under the trees stays readable
 
     // ---- terrain ----
-    const S = W.SIZE, R = 320;
+    const S = W.SIZE, R = Math.round(S / 3.125); // about 3 m between vertices on any map size
     const tg = new THREE.PlaneGeometry(S, S, R, R); tg.rotateX(-Math.PI / 2);
     const tp = tg.attributes.position, cols = [];
     // colour: mossy/dirt variation, rock on steep slopes, darker deep inside ravines
@@ -398,7 +402,14 @@
     // cell gets its own InstancedMesh per kind of object. Chunks outside the view or past the fog are not drawn
     // (see update), which is what makes a forest this dense affordable.
     const colliders = W.colliders = [];
-    const HALF = W.LIMIT + 60, GRID = 10, CELL = HALF * 2 / GRID, chunks = [];
+    const HALF = W.LIMIT + 60, GRID = Math.max(10, Math.round(HALF * 2 / 92)), CELL = HALF * 2 / GRID, chunks = [];
+    // On the larger race map the forest keeps the single-player density over the whole play area round the signal
+    // (to well beyond the starts) and thins out further away, where nobody needs to go. AREA scales every count
+    // so the density per square metre stays what it is in single play.
+    const keep = W.VERSUS ? (x, z) => 0.3 + 0.7 * (1 - N.smoothstep(W.RACE_R + 150, W.RACE_R + 300, Math.hypot(x - W.GOAL.x, z - W.GOAL.z))) : null;
+    let AREA = 1;
+    if (keep) { let s = 0; for (let i = 0; i < 60; i++) for (let j = 0; j < 60; j++) s += keep(((i + 0.5) / 30 - 1) * HALF, ((j + 0.5) / 30 - 1) * HALF); AREA = s / 3600 * (HALF * HALF) / (460 * 460); }
+    const kept = (x, z) => !keep || rnd() < keep(x, z);
     const batch = (geo, mats, o) => {
       const cells = {};
       return {
@@ -450,11 +461,11 @@
     // and leave gaps where it is low. o.clump = {n, r0, r, B, o, s}: up to n companions within r0..r0+r of each one
     // (saplings round a parent tree, stones round a boulder), which is how things actually grow and fall.
     const place = (B, n, o) => {
-      n = Math.round(n * (o.q == null ? Q.veg : o.q));
+      n = Math.round(n * (o.q == null ? Q.veg : o.q) * AREA);
       let c = 0;
       for (let tries = 0; c < n && tries < n * 14; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
-        if (!okAt(x, z, o.clear)) continue;
+        if (!okAt(x, z, o.clear) || !kept(x, z)) continue;
         if (o.dens && rnd() > o.dens(x, z)) continue;
         if (o.maxSlope && slopeAt(x, z) > o.maxSlope) continue;
         put(B, x, z, o); c++;
@@ -590,7 +601,7 @@
     // fallen logs: lie along the slope, half sunk into the litter. They block walking but are low enough to
     // jump over (each collider records the height of the log's top), and a dinosaur simply steps over them.
     {
-      const L = 8, r = 0.38, n = Math.round(240 * Q.veg), lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
+      const L = 8, r = 0.38, n = Math.round(240 * Q.veg * AREA), lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
       for (let i = 0; i < lp.count; i++) {
         const x = lp.getX(i), y = lp.getY(i), z = lp.getZ(i), t = y / L + 0.5, a = Math.atan2(z, x);
         const k = 1 + (0.1 * Math.sin(a * 3 + t * 5) + 0.06 * Math.sin(a * 7 - t * 11)) * Math.min(1, Math.sin(Math.PI * t) * 3);
@@ -608,7 +619,7 @@
       for (let tries = 0; c < n && tries < n * 20; tries++) {
         const x = (rnd() * 2 - 1) * W.LIMIT, z = (rnd() * 2 - 1) * W.LIMIT;
         const s = 0.7 + rnd() * 0.55, yaw = rnd() * Math.PI * 2, hl = L * s / 2, dx = Math.sin(yaw), dz = Math.cos(yaw);
-        if (!okAt(x, z, 16) || !okAt(x + dx * hl, z + dz * hl, 16) || !okAt(x - dx * hl, z - dz * hl, 16)) continue;
+        if (!okAt(x, z, 16) || !okAt(x + dx * hl, z + dz * hl, 16) || !okAt(x - dx * hl, z - dz * hl, 16) || !kept(x, z)) continue;
         const h1 = W.height(x + dx * hl, z + dz * hl), h0 = W.height(x - dx * hl, z - dz * hl), hm = W.height(x, z);
         if (Math.abs(h1 - h0) > hl * 0.8 || Math.abs(hm - (h0 + h1) / 2) > 0.5) continue; // too steep, or bridging a dip / hump
         d2.position.set(x, (h0 + h1) / 2 + r * s * 0.3, z); d2.rotation.set(-Math.atan2(h1 - h0, 2 * hl), yaw, 0); d2.scale.setScalar(s);
@@ -631,9 +642,9 @@
     // ground and thin under closed canopy. Too low to hide in.
     {
       const dens = (x, z) => (0.3 + 0.7 * ss(0.35, 0.6, fbm2(x / 22, z / 22, 220, 2))) * (0.2 + 0.8 * (1 - canopy(x, z)));
-      for (let c = 0, tries = 0; c < 140000 * Q.veg && tries < 1400000; tries++) {
+      for (let c = 0, tries = 0; c < 140000 * Q.veg * AREA && tries < 1400000 * AREA; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
-        if (rnd() > dens(x, z)) continue;
+        if (rnd() > dens(x, z) || !kept(x, z)) continue;
         putLow(x, z); c++;
       }
     }

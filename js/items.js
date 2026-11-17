@@ -92,6 +92,7 @@
     // df: the difficulty level ({items, startFlare, flareTime}); omitted = the original, easy values
     // opt.seed: lay the pickups out from this seed (a race: every player gets the same layout);
     // opt.starts: as many pickups as for this many players (a race has three)
+    // opt.more: this many times as many (a race spreads them over a much larger area)
     // opt.around {c, r}: scatter them evenly over the disc of radius r round c instead of along the route
     //   (a race: a trail of pickups would point the way to the signal)
     // opt.claim(i): when set, walking onto pickup i only asks for it; S.take(i, mine) then removes it
@@ -104,7 +105,7 @@
       const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START], ar = opt.around;
       S.claim = opt.claim || null;
       ORDER.forEach(type => {
-        const n = countOf(type, df.items) * starts.length;
+        const n = Math.round(countOf(type, df.items) * starts.length * (opt.more || 1));
         for (let i = 0; i < n; i++) {
           let x, z;
           if (ar) { // anywhere in the disc (area-even), kept inside the map
@@ -168,12 +169,15 @@
       S.baits = S.baits.filter(x => x !== b);
     };
 
+    // pickups far off in the fog are not drawn (a race has a hundred of them over a large map)
+    const view = p => { const cp = camera.position; return p.mesh.visible = (cp.x - p.pos.x) ** 2 + (cp.z - p.pos.z) ** 2 < 160 * 160; };
+    S.view = () => S.pickups.forEach(p => { if (!p.taken) view(p); }); // for someone only watching
     S.update = function (dt, t) {
       S.adren = Math.max(0, S.adren - dt); S.radar = Math.max(0, S.radar - dt); S.camo = Math.max(0, S.camo - dt);
       // pickups: bob, spin, collect
       const feet = P.pos.y - P.eye, now = performance.now();
       S.pickups.forEach((p, i) => {
-        if (p.taken) return;
+        if (p.taken || !view(p)) return;
         const u = p.mesh.userData;
         u.body.position.y = 0.18 + Math.sin(t * 2 + u.ph) * 0.05; u.body.rotation.y = t * 0.8 + u.ph;
         u.gl.material.opacity = 0.35 + 0.25 * Math.sin(t * 3 + u.ph);

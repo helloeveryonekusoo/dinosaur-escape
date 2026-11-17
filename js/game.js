@@ -872,7 +872,7 @@
     VS.players.forEach(p => { if (p && !playerConnected(p)) VS.ready.add(p.slot); });
     await vsPrepare(VS.seed, vsList());
     VS.ready.add(0); vsMaybeGo();
-    const seed = VS.seed; setTimeout(() => { if (VS.seed === seed) vsMaybeGo(true); }, 25000); // don't wait forever for a slow phone
+    const seed = VS.seed; setTimeout(() => { if (VS.seed === seed) vsMaybeGo(true); }, 45000); // don't wait forever for a slow phone
   }
   const playerConnected = p => p.slot === VS.mySlot || !!p.id;
   // build the race map from the host's seed (everyone ends up with exactly the same trees, rocks and ravines)
@@ -914,7 +914,7 @@
     killer = null; runT = 0; shake = 0; VS.dead = null; VS.raceT = 0; VS.winner = -1; VS.baits = []; VS.sendT = 0; VS.panelT = 0;
     Object.assign(SPEC, { slot: -1, oy: 0, op: 0.3, dist: 7, tp: 1.1, tdist: 26, snap: true });
     // pickups anywhere round the signal, one set for everybody: the first to reach one has it
-    items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS, around: { c: W.GOAL, r: W.RACE_R + 30 }, claim: vsClaim });
+    items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS, around: { c: W.GOAL, r: W.RACE_R + 30 }, more: 1.6, claim: vsClaim });
     LOCAL.slot = VS.mySlot;
     for (const k in keys) keys[k] = false; // nothing still held from the last race (or from watching it)
     VS.players.forEach(p => {
@@ -1118,6 +1118,7 @@
     if (live) VS.raceT += dt;
     // my runner
     if (me && me.st === 'alive' && (VS.phase === 'count' || live) && state === 'play') { runT += dt; updatePlayer(dt); items.update(dt, T); }
+    else items.view();
     me && (me.tp === LOCAL) && (me.yaw = P.yaw, me.pitch = P.pitch, me.cr = P.crouch);
     // the dinosaurs
     let threat = 0;
