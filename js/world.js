@@ -20,7 +20,6 @@
   const RAVINE_N = 7, RAVINE_N_VS = 9, RAVINE_GAP = 2 * 9 + 27; // centre lines at least this far apart (strips never meet)
   function makeRavines(versus) {
     const rr = N.rng(991 + SEED);
-    const r = new V().subVectors(W.GOAL, W.START).normalize(), p = new V(-r.z, 0, r.x);
     const mk = (c, ang, L, k) => {
       const dir = new V(Math.sin(ang), 0, Math.cos(ang)), side = new V(-dir.z, 0, dir.x), n = 12, pts = [];
       for (let i = 0; i < n; i++) {
@@ -53,10 +52,11 @@
       for (let k = 0; k < want; k++) {
         const f0 = 0.14 + 0.76 * (k + 0.5) / want; // spread from near the start to near the goal
         for (let tries = 0; tries < 25; tries++) {
-          const s = versus ? W.STARTS[Math.floor(rr() * W.STARTS.length)] : W.START; // in a race: across one of the routes
-          const f = f0 + (rr() - 0.5) * 0.08;
-          const c = s.clone().lerp(W.GOAL, f).addScaledVector(p, (rr() - 0.5) * (versus ? 60 : 120));
-          const rv = mk(c, Math.atan2(p.x, p.z) + (rr() - 0.5) * 0.9, 90 + rr() * 60, out.length);
+          const s = versus ? W.STARTS[k % W.STARTS.length] : W.START; // in a race: across each route in turn
+          const rs = new V().subVectors(W.GOAL, s).normalize(), ps = new V(-rs.z, 0, rs.x); // across that route
+          const f = (versus ? 0.2 + 0.6 * (Math.floor(k / W.STARTS.length) + 0.5) / Math.ceil(want / W.STARTS.length) : f0) + (rr() - 0.5) * 0.08;
+          const c = s.clone().lerp(W.GOAL, f).addScaledVector(ps, (rr() - 0.5) * (versus ? 60 : 120));
+          const rv = mk(c, Math.atan2(ps.x, ps.z) + (rr() - 0.5) * 0.9, 90 + rr() * 60, out.length);
           if (clearOfEnds(rv) && gapOK(rv, out)) { out.push(rv); break; }
         }
       }
@@ -73,14 +73,23 @@
     W.RAVINE_CROSSINGS = crossings(best);
     return best;
   }
-  // the three starts of a race: the single-player start turned about the goal by -16°, 0 and +16°
-  const raceStarts = () => [-16, 0, 16].map(deg => {
-    const a = deg * Math.PI / 180, vx = W.START.x - W.GOAL.x, vz = W.START.z - W.GOAL.z;
-    return new V(W.GOAL.x + vx * Math.cos(a) - vz * Math.sin(a), 0, W.GOAL.z + vx * Math.sin(a) + vz * Math.cos(a));
-  });
+  // A race: the signal goes somewhere new each time, and the three starts sit evenly round it (120° apart) at the
+  // same distance, at a random turn. The signal is kept where all three starts stay clear of the mountains at the edge.
+  W.GOAL_SOLO = W.GOAL.clone();
+  W.RACE_R = 310;            // start-to-signal distance in a race
+  const RACE_EDGE = 355;     // starts no further out than this (the mountains rise from about 380)
+  function placeRace() {
+    const rr = N.rng(997 + SEED), R = W.RACE_R, a0 = rr() * Math.PI * 2;
+    const off = [0, 1, 2].map(k => { const a = a0 + k * Math.PI * 2 / 3; return [Math.sin(a) * R, Math.cos(a) * R]; });
+    const range = i => { const v = off.map(o => o[i]); return [-RACE_EDGE - Math.min(...v), RACE_EDGE - Math.max(...v)]; };
+    const [x0, x1] = range(0), [z0, z1] = range(1);
+    W.GOAL.set(x0 + (x1 - x0) * rr(), 0, z0 + (z1 - z0) * rr());
+    return off.map(o => new V(W.GOAL.x + o[0], 0, W.GOAL.z + o[1]));
+  }
   W.reseed = function (seed, versus) {
     SEED = seed | 0; W.seed = SEED; W.VERSUS = !!versus;
-    W.STARTS = versus ? raceStarts() : [W.START];
+    if (versus) W.STARTS = placeRace();
+    else { W.GOAL.copy(W.GOAL_SOLO); W.STARTS = [W.START]; }
     W.RAVINES = makeRavines(!!versus);
   };
   W.reseed((Math.random() * 1e6) | 0);

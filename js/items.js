@@ -91,22 +91,30 @@
     }
     // df: the difficulty level ({items, startFlare, flareTime}); omitted = the original, easy values
     // opt.seed: lay the pickups out from this seed (a race: every player gets the same layout);
-    // opt.starts: spread them along the routes from each of these starts in turn (a race has three)
+    // opt.starts: as many pickups as for this many players (a race has three)
+    // opt.around {c, r}: scatter them evenly over the disc of radius r round c instead of along the route
+    //   (a race: a trail of pickups would point the way to the signal)
+    // opt.claim(i): when set, walking onto pickup i only asks for it; S.take(i, mine) then removes it
+    //   (a race: whoever gets to a pickup first has it, and it is gone for everybody)
     S.reset = function (df, opt) {
       clear();
       df = df || { items: 1, startFlare: 1, flareTime: 20 }; opt = opt || {};
       FLARE_TIME = df.flareTime; TYPES.flare.desc = flareDesc();
       S.inv = { flare: df.startFlare, meat: 0, dart: 0, camo: 0, adren: 0, radar: 0 }; S.sel = 0; S.adren = 0; S.radar = 0; S.camo = 0;
-      const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START];
-      let all = 0;
+      const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START], ar = opt.around;
+      S.claim = opt.claim || null;
       ORDER.forEach(type => {
         const n = countOf(type, df.items) * starts.length;
         for (let i = 0; i < n; i++) {
-          // spread along the route to the goal, with some off to the sides
-          const st = starts[all++ % starts.length], ni = Math.floor(i / starts.length), nn = n / starts.length;
-          const f = 0.06 + 0.9 * (ni + rnd()) / nn, side = (rnd() - 0.5) * (rnd() < 0.3 ? (starts.length > 1 ? 120 : 220) : 90);
-          const rx = W.GOAL.x - st.x, rz = W.GOAL.z - st.z, rl = Math.hypot(rx, rz) || 1;
-          let x = THREE.MathUtils.lerp(st.x, W.GOAL.x, f) - rz / rl * side, z = THREE.MathUtils.lerp(st.z, W.GOAL.z, f) + rx / rl * side + (rnd() - 0.5) * 30;
+          let x, z;
+          if (ar) { // anywhere in the disc (area-even), kept inside the map
+            const a = rnd() * Math.PI * 2, d = ar.r * Math.sqrt(rnd()), lim = W.LIMIT - 25;
+            x = Math.max(-lim, Math.min(lim, ar.c.x + Math.sin(a) * d)); z = Math.max(-lim, Math.min(lim, ar.c.z + Math.cos(a) * d));
+          } else { // spread along the route to the goal, with some off to the sides
+            const st = starts[0], f = 0.06 + 0.9 * (i + rnd()) / n, side = (rnd() - 0.5) * (rnd() < 0.3 ? 220 : 90);
+            const rx = W.GOAL.x - st.x, rz = W.GOAL.z - st.z, rl = Math.hypot(rx, rz) || 1;
+            x = THREE.MathUtils.lerp(st.x, W.GOAL.x, f) - rz / rl * side; z = THREE.MathUtils.lerp(st.z, W.GOAL.z, f) + rx / rl * side + (rnd() - 0.5) * 30;
+          }
           for (let k = 0; k < 20; k++) { const q = W.ravineAt(x, z); if (!q || q.depth < 0.2) break; x += 6; } // not inside a ravine
           for (const c of (W.colliders || [])) { // not inside a trunk, boulder or log, where it couldn't be reached
             const dx = x - c.x, dz = z - c.z, d = Math.hypot(dx, dz), m = c.r + 0.7;
@@ -119,6 +127,13 @@
         }
       });
       renderHud();
+    };
+    // pickup i is gone; mine = into my inventory. Returns false if it was already taken.
+    S.take = function (i, mine) {
+      const p = S.pickups[i]; if (!p || p.taken) return false;
+      p.taken = true; scene.remove(p.mesh);
+      if (mine) { S.inv[p.type]++; msg(`${TYPES[p.type].icon} ${TYPES[p.type].name}を拾った`, 1.8); A.pickup && A.pickup(); renderHud(); }
+      return true;
     };
     S.select = i => { S.sel = (i + ORDER.length) % ORDER.length; renderHud(); };
     S.cycle = d => S.select(S.sel + d);
@@ -156,15 +171,15 @@
     S.update = function (dt, t) {
       S.adren = Math.max(0, S.adren - dt); S.radar = Math.max(0, S.radar - dt); S.camo = Math.max(0, S.camo - dt);
       // pickups: bob, spin, collect
-      const feet = P.pos.y - P.eye;
-      S.pickups.forEach(p => {
+      const feet = P.pos.y - P.eye, now = performance.now();
+      S.pickups.forEach((p, i) => {
         if (p.taken) return;
         const u = p.mesh.userData;
         u.body.position.y = 0.18 + Math.sin(t * 2 + u.ph) * 0.05; u.body.rotation.y = t * 0.8 + u.ph;
         u.gl.material.opacity = 0.35 + 0.25 * Math.sin(t * 3 + u.ph);
         if (Math.hypot(P.pos.x - p.pos.x, P.pos.z - p.pos.z) < 1.4 && Math.abs(feet - p.pos.y) < 1.5) {
-          p.taken = true; scene.remove(p.mesh); S.inv[p.type]++;
-          msg(`${TYPES[p.type].icon} ${TYPES[p.type].name}を拾った`, 1.8); A.pickup && A.pickup(); renderHud();
+          if (!S.claim) S.take(i, true);
+          else if (!(p.asked > now - 1500)) { p.asked = now; S.claim(i); } // ask once, again only if no answer came
         }
       });
       // thrown objects

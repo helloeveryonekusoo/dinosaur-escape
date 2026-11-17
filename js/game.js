@@ -841,7 +841,8 @@
       if (n) tell(p.tp, lureText(m.kind === 'meat' ? 'meat' : 'flare'), 2.2);
     } else if (m.t === 'dart' && VS.phase === 'race') {
       const a = TREX()[m.k | 0]; if (a && a.d.root.visible) tranq(a, p.tp);
-    } else if (m.t === 'goal' && VS.phase === 'race' && p.st === 'alive') vsGoal(p.slot, +m.time || VS.raceT);
+    } else if (m.t === 'take' && VS.phase === 'race' && p.st === 'alive') hostTake(m.i | 0, p.slot);
+    else if (m.t === 'goal' && VS.phase === 'race' && p.st === 'alive') vsGoal(p.slot, +m.time || VS.raceT);
   }
   function guestMsg(m) {
     if (m.t === 'busy') { vsAbort(m.why || '部屋に入れませんでした'); return; }
@@ -855,6 +856,7 @@
     } else if (m.t === 'start') { VS.diff = vsDiffKey(m.diff); vsPrepare(m.seed | 0, m.list || []); }
     else if (m.t === 'go') { if (VS.phase === 'loading') VS.goPending = true; else vsGo(); }
     else if (m.t === 'snap') applySnap(m);
+    else if (m.t === 'took') { if (VS.on) items.take(m.i | 0, (m.s | 0) === VS.mySlot); }
     else if (m.t === 'caught') { const me = VS.players[VS.mySlot]; if (me && me.st === 'alive') { me.st = 'dead'; me.dist = goalDist(P.pos); localCaught(TREX()[m.k | 0]); } }
     else if (m.t === 'tell') msg(String(m.m || '').slice(0, 60), +m.d || 2);
     else if (m.t === 'fx' && m.k === 'spawn') { A.roar(new V(+m.x, +m.y, +m.z), DG.SPECIES.trex.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${m.n | 0}頭）`, 3); }
@@ -907,17 +909,19 @@
     ['menu', 'end', 'pause', 'vsLobby'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block'; $('race').style.display = 'block';
     const st = W.STARTS[VS.mySlot] || W.START;
     P.pos.set(st.x, W.height(st.x, st.z) + 1.65, st.z); P.vel.set(0, 0, 0); P.eye = 1.65; P.ground = true;
-    P.yaw = Math.atan2(-(W.GOAL.x - st.x), -(W.GOAL.z - st.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
+    P.yaw = Math.random() * Math.PI * 2; // facing any way: where the signal is has to be found out
+    P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
     killer = null; runT = 0; shake = 0; VS.dead = null; VS.raceT = 0; VS.winner = -1; VS.baits = []; VS.sendT = 0; VS.panelT = 0;
     Object.assign(SPEC, { slot: -1, oy: 0, op: 0.3, dist: 7, tp: 1.1, tdist: 26, snap: true });
-    items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS });
+    // pickups anywhere round the signal, one set for everybody: the first to reach one has it
+    items.reset(DF, { seed: VS.seed + 7, starts: W.STARTS, around: { c: W.GOAL, r: W.RACE_R + 30 }, claim: vsClaim });
     LOCAL.slot = VS.mySlot;
     for (const k in keys) keys[k] = false; // nothing still held from the last race (or from watching it)
     VS.players.forEach(p => {
       if (!p) return;
       p.st = !VS.host || playerConnected(p) ? 'alive' : 'gone'; p.time = 0;
       const s = W.STARTS[p.slot] || W.START; p.tp.pos.set(s.x, W.height(s.x, s.z) + 1.65, s.z); p.dist = goalDist(s);
-      p.yaw = Math.atan2(-(W.GOAL.x - s.x), -(W.GOAL.z - s.z));
+      p.yaw = 0;
     });
     if (VS.players[VS.mySlot]) VS.players[VS.mySlot].tp = LOCAL;
     // the hunters: the first DF.count start on the map, more arrive every DF.spawnEvery seconds (run by the host)
@@ -925,12 +929,18 @@
     dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.feedT = 0; a.d.look = null; });
     roster = trex.slice(0, DF.max);
     if (VS.host) {
-      const rnd = DG.N.rng(VS.seed + 11), spots = [[0.42, 10], [0.78, -25], [0.6, 70], [0.32, -80], [0.9, 60], [0.55, -60]];
+      // in the wedges between the three routes, at various distances from the signal, well away from every start
+      const rnd = DG.N.rng(VS.seed + 11), G = W.GOAL, R = W.RACE_R, base = Math.atan2(W.STARTS[0].x - G.x, W.STARTS[0].z - G.z);
       roster.forEach((a, i) => {
-        const sp = spots[i % spots.length];
-        const p = new V(lerp(W.START.x, W.GOAL.x, sp[0]) + sp[1], 0, lerp(W.START.z, W.GOAL.z, sp[0])).add(new V((rnd() - 0.5) * 30, 0, (rnd() - 0.5) * 30));
-        for (let k = 0; k < 10 && W.STARTS.some(s => Math.hypot(s.x - p.x, s.z - p.z) < 120); k++) p.z -= 25; // keep clear of every start
-        activateDino(a, p, rnd() * Math.PI * 2, i < DF.count);
+        let p = null;
+        for (let k = 0; k < 40 && !p; k++) {
+          const ang = base + Math.PI / 3 + (i % 3) * Math.PI * 2 / 3 + (rnd() - 0.5) * 0.9, d = R * (0.3 + rnd() * 0.55);
+          const q = new V(G.x + Math.sin(ang) * d, 0, G.z + Math.cos(ang) * d);
+          if (Math.abs(q.x) > W.LIMIT - 30 || Math.abs(q.z) > W.LIMIT - 30 || W.ravineAt(q.x, q.z)) continue;
+          if (W.STARTS.some(s => Math.hypot(s.x - q.x, s.z - q.z) < 120)) continue;
+          p = q;
+        }
+        activateDino(a, p || new V(G.x + 40, 0, G.z + 40), rnd() * Math.PI * 2, i < DF.count);
       });
       spawnT = DF.spawnEvery;
     }
@@ -1052,6 +1062,15 @@
     VS.dead = { a, t: 0 }; state = 'dead'; shake = 0.25; if (document.pointerLockElement) document.exitPointerLock();
     $('pause').style.display = 'none';
     if (a) A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8);
+  }
+  // one set of pickups for everybody: the host decides who reached one first, and tells everyone it is gone
+  function vsClaim(i) {
+    if (VS.phase !== 'race') return;
+    if (VS.host) hostTake(i, VS.mySlot); else DG.Net.send({ t: 'take', i });
+  }
+  function hostTake(i, slot) {
+    if (!items.take(i, slot === VS.mySlot)) return;
+    DG.Net.broadcast({ t: 'took', i, s: slot });
   }
   function vsGoal(slot, time) {
     const p = VS.players[slot]; if (!p || p.st !== 'alive' || VS.winner >= 0) return;
@@ -1245,11 +1264,11 @@
     $('dist').textContent = myAlive ? Math.round(gd) : st ? Math.round(goalDist(st.tp.pos)) : '—';
     const n = VS.host ? roster.filter(a => a.d.root.visible).length : VS.nRex, sp = VS.host ? (SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1) : VS.spawnIn;
     $('rexn').textContent = `🦖×${n}` + (sp > 0 ? `（次の出現まで ${sp}秒）` : '') + `　【${VD().name}・3人対戦】`;
-    // compass: north/south…, the signal, and the other runners
+    // compass: north/south… (and T-rexes while the motion detector runs)
     const c = $('compass'); let h = '';
     const mk = (ang, label, cls, style) => { const r = wrapA(ang - vyaw); if (Math.abs(r) < 1.6) h += `<span class="mk ${cls || ''}" style="left:${50 - r / 1.6 * 50}%;${style || ''}">${label}</span>`; };
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
-    VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p !== st && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - vp.x), -(p.tp.pos.z - vp.z)), '●', '', `color:${p.color}`); });
+    // (no marks for the other runners: they start evenly round the signal, so their directions would give it away)
     if (myAlive && items.radar > 0) roster.concat(VS.host ? [] : TREX()).forEach(a => { if (a.d.root.visible) mk(Math.atan2(-(a.pos.x - P.pos.x), -(a.pos.z - P.pos.z)), '🦖' + Math.round(a.pos.distanceTo(P.pos)), 'dn'); });
     c.innerHTML = h;
     if (!VS.dead) $('vign').style.opacity = clamp(threat * 1.1, 0, 0.9);
