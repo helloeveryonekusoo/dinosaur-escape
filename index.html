@@ -101,6 +101,29 @@
   #race .me{font-weight:700}
   #race .out{color:#999;text-decoration:line-through}
   #race .won{color:#c9e6a0}
+  /* ---- co-op ---- */
+  #coop{display:none;z-index:11}
+  #coop .panel{position:absolute;left:16px;top:16px;background:rgba(0,0,0,.42);border:1px solid rgba(255,255,255,.15);border-radius:3px;padding:8px 12px;font-size:13px;line-height:1.8;min-width:230px;max-width:340px;text-shadow:0 1px 2px #000}
+  #coop .panel .t{font-size:11px;color:#c9a24a;letter-spacing:.2em}
+  #coObj b{color:#ffe2a0;font-weight:700}
+  #coObj .t{font-size:11px;color:#c9a24a;letter-spacing:.2em}
+  #coObj .ds{font-size:11px;color:#aaa;line-height:1.4;margin:0 0 4px 1.4em}
+  #coObj .dn{color:#9fc98a}
+  #coObj .ev{margin-top:4px;color:#ffb070;font-size:12px}
+  #coFlash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+  #coTeam{margin-top:6px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px;font-size:12px}
+  #coTeam .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  #coTeam .gh{color:#9fd8ff} #coTeam .es{color:#c9e6a0} #coTeam .gn{color:#888}
+  #coPrompt{position:absolute;left:50%;top:60%;transform:translateX(-50%);text-align:center;font-size:14px;letter-spacing:.08em;text-shadow:0 1px 4px #000;display:none}
+  #coPrompt i{display:block;width:180px;height:4px;margin:6px auto 0;background:rgba(255,255,255,.18);border-radius:2px;overflow:hidden}
+  #coPrompt b{display:block;height:100%;width:0;background:#ffe2a0}
+  #coGhost{position:absolute;left:50%;bottom:28px;transform:translateX(-50%);font-size:13px;color:#bfe6ff;text-shadow:0 1px 4px #000;text-align:center;display:none;max-width:90vw;line-height:1.7}
+  body.ghost canvas{filter:grayscale(.55) sepia(.25) hue-rotate(165deg) brightness(1.55) contrast(1.05)}
+  #touch .co{display:none} body.coop #touch .co{display:block}
+  #tAct{right:calc(160px + env(safe-area-inset-right));bottom:14px}
+  #tLight{right:calc(160px + env(safe-area-inset-right));bottom:86px}
+  #tPing{right:calc(16px + env(safe-area-inset-right));bottom:158px}
+  body.touch #coop .panel{top:58px;left:calc(10px + env(safe-area-inset-left));font-size:11px;line-height:1.5;min-width:170px;padding:5px 8px}
   #count{display:none;z-index:26;align-items:center;justify-content:center;font-size:96px;font-weight:800;letter-spacing:.1em;text-shadow:0 4px 30px #000}
   #endRank{margin:4px 0 16px;font-size:15px;line-height:2}
   #endRank .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
@@ -177,7 +200,7 @@
   <div class="btns">
     <button id="btnPrev">◀</button><button id="btnNext">▶</button>
     <button id="btnStart">ゲーム開始</button>
-    <button id="btnVs">3人対戦</button>
+    <button id="btnVs">オンライン（対戦・協力）</button>
   </div>
   <div id="help">WASD 移動 ／ Shift ダッシュ ／ Space ジャンプ ／ C しゃがむ（茂みに隠れる）／ マウス 視点 ／ Esc 一時停止<br>
   森の奥の救難信号（赤い煙）までたどり着けば脱出成功。ティラノは時間とともに増えていく（頭数と間隔は難易度による）。森と地割れの配置はゲームごとに変わる。<br>
@@ -202,6 +225,7 @@
 <div id="touch" class="layer">
   <div id="stickZone"></div><div id="stick"><i></i></div>
   <button id="tRun">走る</button><button id="tJump">跳ぶ</button><button id="tCrouch">しゃ<br>がむ</button><button id="tUse">使う</button><button id="tPause">Ⅱ</button>
+  <button id="tAct" class="co">調べる</button><button id="tLight" class="co">ライト</button><button id="tPing" class="co">合図</button>
 </div>
 <div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
 <div id="pause" class="layer"><h2>PAUSE</h2>
@@ -211,8 +235,8 @@
 <!-- 3-player race: lobby, live standings, countdown -->
 <div id="vsLobby" class="layer">
   <div class="box">
-    <h2>3人対戦</h2>
-    <p class="note">3人は救難信号を囲むように同じ距離の別々の地点から、スタート（信号の位置は毎回変わります）。最初に救難信号へたどり着いた人の勝ち。アイテムは早い者勝ち。恐竜に捕まった人は脱落し、残りの人を好きな視点で観戦できます。難易度は部屋を作った人が選びます。</p>
+    <h2>オンライン</h2>
+    <p class="note">レース（2〜3人）か協力（2〜4人）を、部屋を作った人が選びます。難易度もホストが選びます。</p>
     <div id="vsHome">
       <label class="row"><span class="lbl">名前</span><input id="vsName" maxlength="8" placeholder="プレイヤー"></label>
       <div class="row"><button id="vsCreate">部屋を作る</button></div>
@@ -220,11 +244,13 @@
     </div>
     <div id="vsRoom">
       <div class="row"><span class="lbl">部屋コード</span><b id="vsCodeShow"></b></div>
-      <p class="note">このコードを他の2人に伝えて、「部屋に入る」で入力してもらいます。</p>
+      <p class="note">このコードをほかの人に伝えて、「部屋に入る」で入力してもらいます。</p>
       <ul id="vsList"></ul>
+      <div class="row"><span class="lbl">モード</span><span class="toggle" id="vsModeBtns"><button data-m="race">レース</button><button data-m="coop">協力</button></span></div>
+      <p id="vsModeInfo" class="note"></p>
       <div class="row"><span class="lbl">難易度</span><span id="vsDiffBtns"></span></div>
       <p id="vsDiffInfo" class="note"></p>
-      <div class="row"><span class="lbl">方向のヒント</span><span class="toggle" id="vsHintBtns"><button data-v="1">あり</button><button data-v="0">なし</button></span></div>
+      <div class="row" id="vsHintRow"><span class="lbl">方向のヒント</span><span class="toggle" id="vsHintBtns"><button data-v="1">あり</button><button data-v="0">なし</button></span></div>
       <p id="vsHintInfo" class="note"></p>
       <div class="row"><button id="vsGo">対戦開始</button></div>
     </div>
@@ -234,6 +260,13 @@
   </div>
 </div>
 <div id="race" class="layer"></div>
+<!-- co-op: objective and team, the hold-to-act prompt, the ghost banner -->
+<div id="coop" class="layer">
+  <div class="panel"><div id="coObj"></div><div id="coTeam"></div></div>
+  <div id="coFlash"></div>
+  <div id="coPrompt"><span id="coPromptText"></span><i><b id="coPromptBar"></b></i></div>
+  <div id="coGhost"></div>
+</div>
 <div id="spec" class="layer"><div class="bar">
   <div class="row"><button id="specPrev" aria-label="前のプレイヤー">◀</button><span id="specWho"></span><button id="specNext" aria-label="次のプレイヤー">▶</button></div>
   <div class="row" id="specModes"><button data-m="fp">本人の目線</button><button data-m="back">後ろから</button><button data-m="top">上空から</button></div>

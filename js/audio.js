@@ -111,6 +111,100 @@
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.12, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
     ns.connect(bp); bp.connect(g); g.connect(master); ns.start(t, Math.random()); ns.stop(t + 0.25);
   };
+  // ---- the night swamp (co-op) ----
+  // rain: a steady hiss whose level can be set (0 = off)
+  let rainG = null;
+  A.rain = function (level) {
+    if (!A.ok) return;
+    if (!rainG) {
+      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6500;
+      rainG = ctx.createGain(); rainG.gain.value = 0;
+      src.connect(hp); hp.connect(lp); lp.connect(rainG); rainG.connect(master); src.start();
+    }
+    rainG.gain.setTargetAtTime(0.11 * level, ctx.currentTime, 0.5);
+  };
+  // thunder: a crack, then a long rolling rumble (delay: seconds after the flash)
+  A.thunder = function (delay, vol) {
+    if (!A.ok) return; const t = ctx.currentTime + (delay || 0); vol = vol || 1;
+    const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(900, t); lp.frequency.exponentialRampToValueAtTime(120, t + 4);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.7 * vol, t + 0.05);
+    for (let k = 0.3; k < 4.5; k += 0.25) g.gain.setValueAtTime((0.25 + Math.random() * 0.5) * vol * Math.max(0.05, 1 - k / 4.8), t + k);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 5.2);
+    ns.connect(lp); lp.connect(g); g.connect(master); ns.start(t, Math.random()); ns.stop(t + 5.4);
+  };
+  A.splash = function (vol) { // wading through a pool
+    if (!A.ok) return; const t = ctx.currentTime;
+    const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 500 + Math.random() * 500; bp.Q.value = 1.4;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22 * vol, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    ns.connect(bp); bp.connect(g); g.connect(master); ns.start(t, Math.random() * 2); ns.stop(t + 0.32);
+  };
+  // a low, wet growl close by (the stalker breathing in the dark)
+  A.growl = function (pos, vol) {
+    if (!A.ok) return; const t = ctx.currentTime, out = panner(pos, 6), d = 1.6 + Math.random();
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(38, t); o.frequency.linearRampToValueAtTime(30, t + d);
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 9 + Math.random() * 5; lg.gain.value = 0.5; lfo.connect(lg);
+    const am = ctx.createGain(); am.gain.value = 0.5; lg.connect(am.gain);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.8 * vol, t + 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(am); am.connect(lp); lp.connect(g); g.connect(out);
+    o.start(t); o.stop(t + d + 0.05); lfo.start(t); lfo.stop(t + d + 0.05);
+  };
+  // the generator at the radio tower: a throbbing engine hum while it runs
+  let hum = null;
+  A.hum = function (on, pos) {
+    if (!A.ok) return;
+    if (on && !hum) {
+      const out = panner(pos, 10), o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 46;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+      const g = ctx.createGain(); g.gain.value = 0.0001; g.gain.setTargetAtTime(0.35, ctx.currentTime, 0.4);
+      const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 7; lg.gain.value = 0.12; lfo.connect(lg); lg.connect(g.gain);
+      o.connect(lp); lp.connect(g); g.connect(out); o.start(); lfo.start(); hum = { o, lfo, g };
+    } else if (!on && hum) {
+      const h = hum; hum = null; h.g.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.3);
+      setTimeout(() => { try { h.o.stop(); h.lfo.stop(); } catch (e) { } }, 1500);
+    }
+  };
+  A.radio = function () { // radio contact: a burst of static and beeps
+    if (!A.ok) return; const t = ctx.currentTime;
+    const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.7;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+    ns.connect(bp); bp.connect(g); g.connect(master); ns.start(t, Math.random()); ns.stop(t + 1.3);
+    [0, 0.25, 0.5].forEach(d => { const o = ctx.createOscillator(), og = ctx.createGain(); o.frequency.value = 1400; og.gain.setValueAtTime(0.0001, t + 1.3 + d); og.gain.linearRampToValueAtTime(0.06, t + 1.32 + d); og.gain.exponentialRampToValueAtTime(0.0001, t + 1.45 + d); o.connect(og); og.connect(master); o.start(t + 1.3 + d); o.stop(t + 1.5 + d); });
+  };
+  A.ghost = function () { // becoming a ghost: a falling, hollow tone
+    if (!A.ok) return; const t = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(660, t); o.frequency.exponentialRampToValueAtTime(110, t + 3);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.12, t + 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + 3.3);
+  };
+  // co-op items: a firecracker's pop, a flashbang's bang, dynamite's blast, a wire hook firing, a distant beeping radio
+  const burst = (pos, ref, f, q, vol, len) => {
+    const out = panner(pos, ref), t = ctx.currentTime, ns = ctx.createBufferSource(); ns.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+    const g = ctx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    ns.connect(bp); bp.connect(g); g.connect(out); ns.start(t, Math.random() * 2); ns.stop(t + len + 0.05);
+  };
+  A.pop = function (pos) { if (!A.ok) return; burst(pos, 9, 1800 + Math.random() * 1500, 0.6, 1.2, 0.09); };
+  A.bang = function (pos) { if (!A.ok) return; burst(pos, 14, 2400, 0.4, 2.2, 0.5); burst(pos, 14, 400, 0.6, 1.4, 0.8); };
+  A.boom = function (pos) {
+    if (!A.ok) return; burst(pos, 22, 160, 0.5, 3, 2.6); burst(pos, 22, 900, 0.5, 1.6, 0.7);
+    const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(), out = panner(pos, 22);
+    o.frequency.setValueAtTime(60, t); o.frequency.exponentialRampToValueAtTime(22, t + 1.4);
+    g.gain.setValueAtTime(1.4, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6); o.connect(g); g.connect(out); o.start(t); o.stop(t + 1.7);
+  };
+  A.zip = function () { // the hook's wire running out
+    if (!A.ok) return; const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(300, t); o.frequency.exponentialRampToValueAtTime(1600, t + 0.35);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.05, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4); o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.45);
+  };
+  A.beep = function (pos) { // a lost radio calling out in the dark
+    if (!A.ok) return; const t = ctx.currentTime, out = panner(pos, 7);
+    [0, 0.18].forEach(d => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'square'; o.frequency.value = 1250;
+      g.gain.setValueAtTime(0.0001, t + d); g.gain.linearRampToValueAtTime(0.09, t + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.12); o.connect(g); g.connect(out); o.start(t + d); o.stop(t + d + 0.14); });
+  };
   A.heart = function (vol) {
     if (!A.ok) return; const t = ctx.currentTime;
     [0, 0.17].forEach((dt, i) => {

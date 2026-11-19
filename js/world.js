@@ -89,12 +89,47 @@
     W.GOAL.set(x0 + (x1 - x0) * rr(), 0, z0 + (z1 - z0) * rr());
     return off.map(o => new V(W.GOAL.x + o[0], 0, W.GOAL.z + o[1]));
   }
-  W.reseed = function (seed, versus) {
-    SEED = seed | 0; W.seed = SEED; W.VERSUS = !!versus;
-    Object.assign(W, versus ? RACE_MAP : SOLO_MAP);
+  // Co-op (2-4 players): a night swamp. The team starts together at a camp; the radio tower, six supply crates
+  // (some holding the fuses the tower needs) and the helicopter landing zone are spread round the map.
+  // No ravines here: the swamp's pools (W.WATER) are what slows you down and makes noise.
+  const COOP_MAP = { LIMIT: 330, SIZE: 900 };
+  W.WATER = -1e9;
+  // The way out is picked from the seed too: 0 a helicopter at a landing zone, 1 a boat at a jetty (on a pool dug
+  // out beside it), 2 an old mine tunnel in the hills at the map's edge. W.GOAL is where you board it.
+  // Sixteen more spots, each on a small island, are where this game's missions put their things (game.js).
+  function placeCoop() {
+    const rr = N.rng(1201 + SEED), a0 = rr() * Math.PI * 2, P = (a, d) => new V(Math.sin(a) * d, 0, Math.cos(a) * d);
+    const esc = Math.floor(rr() * 3), aEsc = a0 + Math.PI + (rr() - 0.5) * 0.7;
+    const camp = P(a0, 235), lz = P(aEsc, esc === 2 ? 292 : 245), tower = P(a0 + Math.PI / 2 + (rr() - 0.5) * 0.8, 70 + rr() * 50);
+    const caches = [], spots = [];
+    for (let tries = 0; caches.length < 6 && tries < 600; tries++) {
+      const q = P(rr() * Math.PI * 2, 70 + rr() * 200);
+      if ([camp, lz, tower, ...caches].some(s => Math.hypot(s.x - q.x, s.z - q.z) < (s === camp ? 110 : 75))) continue;
+      caches.push(q);
+    }
+    for (let tries = 0, gap = 58; spots.length < 16 && tries < 4000; tries++) {
+      if (tries % 800 === 799) gap -= 8; // crowded: allow them a little closer together
+      const q = P(rr() * Math.PI * 2, 40 + Math.sqrt(rr()) * 240);
+      if ([camp, lz, tower, ...caches, ...spots].some(s => Math.hypot(s.x - q.x, s.z - q.z) < (s === camp ? 70 : s === lz ? 60 : gap))) continue;
+      spots.push(q);
+    }
+    // the boat lies on water just off the jetty (on the side away from the map's centre); the tunnel's mouth faces the swamp
+    const out = new V(lz.x, 0, lz.z).normalize();
+    const boat = lz.clone().addScaledVector(out, 11), mouth = lz.clone();
+    W.SITES = { camp, tower, lz, caches, spots, esc, boat, mouth, out };
+    W.GOAL.copy(esc === 1 ? lz.clone().addScaledVector(out, 4) : lz);
+    const face = Math.atan2(-camp.x, -camp.z); // the starts sit round the camp fire, the first facing the map's centre
+    return [0, 1, 2, 3].map(k => camp.clone().add(P(face + (k - 1.5) * 0.7, 6)));
+  }
+  W.reseed = function (seed, mode) {
+    const versus = mode === true || mode === 'race', coop = mode === 'coop';
+    SEED = seed | 0; W.seed = SEED; W.VERSUS = versus; W.COOP = coop;
+    Object.assign(W, versus ? RACE_MAP : coop ? COOP_MAP : SOLO_MAP);
+    W.WATER = coop ? -0.55 : -1e9; W.SITES = null;
     if (versus) W.STARTS = placeRace();
+    else if (coop) W.STARTS = placeCoop();
     else { W.GOAL.copy(W.GOAL_SOLO); W.STARTS = [W.START]; }
-    W.RAVINES = makeRavines(!!versus);
+    W.RAVINES = coop ? [] : makeRavines(versus);
   };
   W.reseed((Math.random() * 1e6) | 0);
   // half-width at fraction t along the ravine: alternating narrow (≈3.5 m, jumpable) and wide (≈7.5 m) stretches
@@ -130,7 +165,33 @@
     return RQ;
   };
 
+  // the swamp: almost flat, with pools wherever the "wet" field is high, and low islands under every site
+  function swampHeight(x, z) {
+    let h = (fbm2(x / 200 + 10, z / 200 + 10, 101, 4) - 0.5) * 6 + (fbm2(x / 48, z / 48, 102, 3) - 0.5) * 2.4;
+    h -= N.smoothstep(0.48, 0.62, fbm2(x / 85 + 3, z / 85 + 5, 105, 3)) * 2.3;
+    const e = Math.max(Math.abs(x), Math.abs(z));
+    h += N.smoothstep(W.LIMIT - 20, W.LIMIT + 90, e) * 55 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
+    const S = W.SITES;
+    if (S) {
+      for (const p of [S.camp, S.tower, S.lz, ...S.caches]) {
+        const d = Math.hypot(x - p.x, z - p.z); if (d > 34) continue;
+        const k = 1 - N.smoothstep(12, 34, d); h = h + (Math.max(h, 0.35) - h) * k;
+      }
+      for (const p of S.spots) { // the mission spots: smaller islands
+        const d = Math.hypot(x - p.x, z - p.z); if (d > 18) continue;
+        const k = 1 - N.smoothstep(6, 18, d); h = h + (Math.max(h, 0.3) - h) * k;
+      }
+      if (S.esc === 1) { // the boat's pool, deep enough to float in
+        const d = Math.hypot(x - S.boat.x, z - S.boat.z);
+        if (d < 16) h = Math.min(h, h + (-1.6 - h) * (1 - N.smoothstep(7, 16, d)));
+      }
+    }
+    return h;
+  }
+  // depth of water at (x, z): > 0 in a pool
+  W.waterDepth = (x, z) => W.WATER - W.height(x, z);
   W.height = function (x, z) {
+    if (W.COOP) return swampHeight(x, z);
     let h = (fbm2(x / 260 + 10, z / 260 + 10, 101, 4) - 0.5) * 34 + (fbm2(x / 70, z / 70, 102, 3) - 0.5) * 7;
     const e = Math.max(Math.abs(x), Math.abs(z));
     h += N.smoothstep(W.LIMIT - 20, W.LIMIT + 90, e) * 70 * (0.6 + 0.8 * fbm2(x / 50, z / 50, 103, 2));
@@ -253,26 +314,37 @@
     // thinned for phones there: opts.layout = {veg: 1, fern: 1}.
     const Q = Object.assign({ veg: 1, fern: 1, shadow: 4096 }, DG.Q, opts && opts.layout);
     // ---- sky & lights ----
-    const sky = new THREE_Sky(); sky.scale.setScalar(4500);
-    const su = sky.material.uniforms; su.turbidity.value = 9; su.rayleigh.value = 1.6; su.mieCoefficient.value = 0.006; su.mieDirectionalG.value = 0.82;
-    const sunDir = new V().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 24), THREE.MathUtils.degToRad(-35));
-    su.sunPosition.value.copy(sunDir);
-    const envScene = new THREE.Scene(); const sky2 = new THREE_Sky(); sky2.scale.setScalar(1000); sky2.material.uniforms.sunPosition.value.copy(sunDir);
-    ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG'].forEach(k => sky2.material.uniforms[k].value = su[k].value);
-    envScene.add(sky2);
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envRT = pmrem.fromScene(envScene, 0.04);
-    scene.environment = envRT.texture;
-    pmrem.dispose(); sky2.geometry.dispose(); sky2.material.dispose();
-    scene.add(sky);
-    // pale, slightly blue haze: distance washes things out toward the colour of the sky (aerial perspective)
-    scene.fog = new THREE.FogExp2(0xb1bfc0, 0.0075);
-    const sun = new THREE.DirectionalLight(0xffe4bc, 2.9);
-    sun.castShadow = true; sun.shadow.mapSize.set(Q.shadow, Q.shadow);
+    const NIGHT = !!W.COOP;
+    let sunDir, envRT = null, hemi;
+    if (!NIGHT) {
+      const sky = new THREE_Sky(); sky.scale.setScalar(4500);
+      const su = sky.material.uniforms; su.turbidity.value = 9; su.rayleigh.value = 1.6; su.mieCoefficient.value = 0.006; su.mieDirectionalG.value = 0.82;
+      sunDir = new V().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 24), THREE.MathUtils.degToRad(-35));
+      su.sunPosition.value.copy(sunDir);
+      const envScene = new THREE.Scene(); const sky2 = new THREE_Sky(); sky2.scale.setScalar(1000); sky2.material.uniforms.sunPosition.value.copy(sunDir);
+      ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG'].forEach(k => sky2.material.uniforms[k].value = su[k].value);
+      envScene.add(sky2);
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      envRT = pmrem.fromScene(envScene, 0.04);
+      scene.environment = envRT.texture;
+      pmrem.dispose(); sky2.geometry.dispose(); sky2.material.dispose();
+      scene.add(sky);
+      // pale, slightly blue haze: distance washes things out toward the colour of the sky (aerial perspective)
+      scene.fog = new THREE.FogExp2(0xb1bfc0, 0.0075);
+    } else {
+      // a moonless, rainy night: almost black, with a cold haze that swallows everything past ~40 m
+      sunDir = new V().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 38), THREE.MathUtils.degToRad(40));
+      scene.background = new THREE.Color(0x05080b);
+      scene.environment = null;
+      scene.fog = new THREE.FogExp2(0x070a0d, 0.034);
+    }
+    const sun = new THREE.DirectionalLight(NIGHT ? 0x8ea4c8 : 0xffe4bc, NIGHT ? 0.32 : 2.9);
+    sun.castShadow = true; sun.shadow.mapSize.set(NIGHT ? Math.min(Q.shadow, 2048) : Q.shadow, NIGHT ? Math.min(Q.shadow, 2048) : Q.shadow);
     const sc = sun.shadow.camera; sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 250;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
     scene.add(sun, sun.target);
-    scene.add(new THREE.HemisphereLight(0xc4d6ea, 0x545038, 0.5)); // sky fill, so shade under the trees stays readable
+    hemi = new THREE.HemisphereLight(NIGHT ? 0x26354d : 0xc4d6ea, NIGHT ? 0x0d0c09 : 0x545038, NIGHT ? 0.32 : 0.5); // sky fill, so shade under the trees stays readable
+    scene.add(hemi);
 
     // ---- terrain ----
     const S = W.SIZE, R = Math.round(S / 3.125); // about 3 m between vertices on any map size
@@ -428,12 +500,16 @@
         }
       };
     };
-    const okAt = (x, z, clear) => {
+    // wet: may stand in a swamp pool (dead trunks and reeds do; nothing else grows in open water)
+    const SITE_LIST = W.SITES ? [W.SITES.tower, ...W.SITES.caches, ...W.SITES.spots, W.SITES.boat] : [];
+    const okAt = (x, z, clear, wet) => {
       if (Math.abs(x) > W.LIMIT + 40 || Math.abs(z) > W.LIMIT + 40) return false;
       for (const p of W.STARTS) if (Math.hypot(x - p.x, z - p.z) < clear) return false;
       if (Math.hypot(x - W.GOAL.x, z - W.GOAL.z) < clear) return false;
+      for (const p of SITE_LIST) if (Math.hypot(x - p.x, z - p.z) < Math.max(clear, 9)) return false;
+      if (W.COOP && !wet && W.height(x, z) < W.WATER + 0.08) return false;
       // the glade at the start, where the title screen shows the dinosaur off: nothing taller than ferns grows there
-      if (clear >= 10 && !W.VERSUS && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
+      if (clear >= 10 && !W.VERSUS && !W.COOP && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
       const q = W.ravineAt(x, z); if (q && q.d < q.hw + 3) return false; // keep ravines and their rims clear
       return true;
     };
@@ -460,19 +536,20 @@
     // Scatter n objects. o.dens(x, z) -> 0..1 is the chance a spot is accepted, so plants gather where it is high
     // and leave gaps where it is low. o.clump = {n, r0, r, B, o, s}: up to n companions within r0..r0+r of each one
     // (saplings round a parent tree, stones round a boulder), which is how things actually grow and fall.
+    // the swamp keeps few living conifers and many more dead, drowned trunks (o.cm: this kind's count there)
     const place = (B, n, o) => {
-      n = Math.round(n * (o.q == null ? Q.veg : o.q) * AREA);
+      n = Math.round(n * (o.q == null ? Q.veg : o.q) * AREA * (W.COOP && o.cm != null ? o.cm : 1));
       let c = 0;
       for (let tries = 0; c < n && tries < n * 14; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
-        if (!okAt(x, z, o.clear) || !kept(x, z)) continue;
+        if (!okAt(x, z, o.clear, o.wet) || !kept(x, z)) continue;
         if (o.dens && rnd() > o.dens(x, z)) continue;
         if (o.maxSlope && slopeAt(x, z) > o.maxSlope) continue;
         put(B, x, z, o); c++;
         const cl = o.clump;
         if (cl) for (let k = Math.floor(rnd() * (cl.n + 1)); k > 0; k--) {
           const a = rnd() * 6.283, d = cl.r0 + rnd() * cl.r, x2 = x + Math.cos(a) * d, z2 = z + Math.sin(a) * d, o2 = cl.o || o;
-          if (!okAt(x2, z2, o2.clear) || (o2.maxSlope && slopeAt(x2, z2) > o2.maxSlope)) continue;
+          if (!okAt(x2, z2, o2.clear, o2.wet) || (o2.maxSlope && slopeAt(x2, z2) > o2.maxSlope)) continue;
           put(cl.B || B, x2, z2, o2, cl.s); if (!cl.B) c++;
         }
       }
@@ -538,8 +615,8 @@
       return tree(Object.assign({ h, r0, r1: r0 * 0.22, flare: 0.45, lean: 0.5, cy: null, branches: br, stubs: stubs(Math.round(y0 / 2.5), y0 * 0.4, y0, 1.2, 0.04) }, ex || {}));
     };
     const treeMats = [barkMat, treeLeaf];
-    const big = { clear: 26, smin: 0.72, smax: 1.2, sy: [0.88, 1.18], tilt: 0.07, collide: 0.6, maxSlope: 0.55, skirt: 3 };
-    const sapling = { clear: 20, smin: 0.5, smax: 1.25, sy: [0.85, 1.25], tilt: 0.1, collide: 0.3, maxSlope: 0.6, skirt: 2 };
+    const big = { clear: 26, smin: 0.72, smax: 1.2, sy: [0.88, 1.18], tilt: 0.07, collide: 0.6, maxSlope: 0.55, skirt: 3, cm: 0.14 };
+    const sapling = { clear: 20, smin: 0.5, smax: 1.25, sy: [0.85, 1.25], tilt: 0.1, collide: 0.3, maxSlope: 0.6, skirt: 2, cm: 0.3 };
     const youngB = batch(conical(9, 1.3, 18, 2.7, 0.5, 0.2, 1.7), treeMats, { shadow: true, far: 250 });
     const araDens = (x, z) => canopy(x, z) * (0.3 + 0.7 * ss(0.38, 0.6, stand(x, z)));
     const conDens = (x, z) => canopy(x, z) * (0.3 + 0.7 * ss(0.4, 0.62, 1 - stand(x, z)));
@@ -549,13 +626,13 @@
     youngB.build();
     // giants: a few enormous old trees with buttressed trunks, standing well above the canopy
     const giantB = batch(conical(42, 19, 40, 7.5, 1.6, 1.4, 3.0, { radial: 16, hs: 10, flare: 0.55 }), treeMats, { shadow: true, far: 270 });
-    place(giantB, 170, { clear: 42, dens: canopy, smin: 0.8, smax: 1.25, sy: [0.9, 1.1], tilt: 0.04, collide: 1.6, maxSlope: 0.45, skirt: 6 }); giantB.build();
+    place(giantB, 170, { cm: 0.3, clear: 42, dens: canopy, smin: 0.8, smax: 1.25, sy: [0.9, 1.1], tilt: 0.04, collide: 1.6, maxSlope: 0.45, skirt: 6 }); giantB.build();
     // poles: thin young trunks in tight groups, with only a tuft of foliage at the top. A real forest shows far
     // more stems than crowns; these (and the dead trunks below) supply them cheaply. Too thin to block anyone.
     {
       const br = []; for (let i = 0; i < 12; i++) br.push({ y: 3.4 + i * 0.32 + rnd() * 0.15, len: 1.7 - i * 0.1, wid: 1.15, tilt: 0.25 - i * 0.07, droop: 0.35, yaw: i * 2.39996 + rnd() * 0.4 });
       const B = batch(tree({ h: 7.2, r0: 0.085, r1: 0.03, flare: 0.25, lean: 0.35, radial: 5, hs: 3, cy: null, branches: br }), treeMats, { shadow: true, far: 170 });
-      const pole = { clear: 16, smin: 0.6, smax: 1.15, sy: [0.8, 1.2], tilt: 0.16, maxSlope: 0.6 };
+      const pole = { clear: 16, smin: 0.6, smax: 1.15, sy: [0.8, 1.2], tilt: 0.16, maxSlope: 0.6, cm: 0.35 };
       place(B, 4200, Object.assign({ dens: (x, z) => canopy(x, z) * ss(0.42, 0.6, fbm2(x / 30, z / 30, 213, 2)), clump: { n: 4, r0: 0.5, r: 2.2 } }, pole)); B.build();
     }
 
@@ -563,14 +640,14 @@
     const fParts = [{ geo: trunkGeo(3.2, 0.22, 0.13, 0.25, y => [Math.sin(y * 0.7) * 0.12, 0], 3, 8, 4), group: 0 }];
     crown(14, 2.6, 0.9, 1.6, -0.45, rnd, 3.1).forEach(p => { p.geo.translate(Math.sin(3.1 * 0.7) * 0.12, 0, 0); fParts.push(p); });
     const tfB = batch(merge(fParts), [barkMat, fernMat], { shadow: true, far: 170 });
-    place(tfB, 2800, { clear: 14, dens: (x, z) => ss(0.34, 0.55, fbm2(x / 60, z / 60, 202, 3)) * (0.35 + 0.65 * canopy(x, z)), smin: 0.7, smax: 1.5, sy: [0.8, 1.3], tilt: 0.12, collide: 0.25, maxSlope: 0.7, skirt: 2, clump: { n: 2, r0: 1.2, r: 3 } }); tfB.build();
+    place(tfB, 2800, { cm: 0.5, clear: 14, dens: (x, z) => ss(0.34, 0.55, fbm2(x / 60, z / 60, 202, 3)) * (0.35 + 0.65 * canopy(x, z)), smin: 0.7, smax: 1.5, sy: [0.8, 1.3], tilt: 0.12, collide: 0.25, maxSlope: 0.7, skirt: 2, clump: { n: 2, r0: 1.2, r: 3 } }); tfB.build();
 
     // cycads: a squat barrel trunk with a rosette of stiff fronds; they like the light of clearings and margins
     const cParts = [{ geo: trunkGeo(0.9, 0.3, 0.26, 0.15, null, 5, 10, 3), group: 0 }];
     crown(16, 1.7, 0.42, 0.9, -0.55, rnd, 0.85, 5).forEach(p => cParts.push(p));
     crown(8, 1.1, 0.34, 0.5, -1.15, rnd, 0.9, 4).forEach(p => cParts.push(p));
     const cyB = batch(merge(cParts), [barkMat, cycadLeaf], { far: 130 });
-    place(cyB, 1300, { clear: 10, dens: (x, z) => (1 - 0.75 * canopy(x, z)) * ss(0.4, 0.6, fbm2(x / 45, z / 45, 207, 3)), smin: 0.7, smax: 1.5, collide: 0.3, maxSlope: 0.7, skirt: 1, clump: { n: 2, r0: 1, r: 3 } }); cyB.build();
+    place(cyB, 1300, { cm: 0.25, clear: 10, dens: (x, z) => (1 - 0.75 * canopy(x, z)) * ss(0.4, 0.6, fbm2(x / 45, z / 45, 207, 3)), smin: 0.7, smax: 1.5, collide: 0.3, maxSlope: 0.7, skirt: 1, clump: { n: 2, r0: 1, r: 3 } }); cyB.build();
 
     // dead wood: a good share of the stems in any forest are dead. Broken stumps, splintered snags, and tall
     // bare trunks that still carry a few branches; some of them leaning.
@@ -590,18 +667,18 @@
     };
     const deadMats = [deadMat, woodMat], deadDens = (x, z) => 0.25 + 0.75 * canopy(x, z);
     const stumpB = batch(snagGeo(1.9, 0.5, 0.4, 2), deadMats, { shadow: true, far: 130 });
-    place(stumpB, 420, { clear: 14, dens: deadDens, smin: 0.5, smax: 1.3, tilt: 0.15, collide: 0.6, maxSlope: 0.6, skirt: 3 }); stumpB.build();
+    place(stumpB, 420, { cm: 1.8, wet: true, clear: 14, dens: deadDens, smin: 0.5, smax: 1.3, tilt: 0.15, collide: 0.6, maxSlope: 0.6, skirt: 3 }); stumpB.build();
     const snagB = batch(snagGeo(9, 0.42, 0.26, 4, 3), deadMats, { shadow: true, far: 250 });
-    place(snagB, 420, { clear: 20, dens: deadDens, smin: 0.6, smax: 1.3, sy: [0.7, 1.3], tilt: 0.14, collide: 0.5, maxSlope: 0.55, skirt: 2 }); snagB.build();
+    place(snagB, 420, { cm: 2.6, wet: true, clear: 20, dens: deadDens, smin: 0.6, smax: 1.3, sy: [0.7, 1.3], tilt: 0.14, collide: 0.5, maxSlope: 0.55, skirt: 2 }); snagB.build();
     const deadB = batch(snagGeo(17, 0.36, 0.1, 7, 8), deadMats, { shadow: true, far: 250 });
-    place(deadB, 620, { clear: 22, dens: deadDens, smin: 0.6, smax: 1.3, sy: [0.75, 1.3], tilt: 0.12, collide: 0.42, maxSlope: 0.55, skirt: 2 });
-    place(deadB, 110, { clear: 26, dens: deadDens, smin: 0.6, smax: 1.1, tilt: 0.85, sink: 0.4, collide: 0.42, maxSlope: 0.5, skirt: 2 }); // leaning, half fallen
+    place(deadB, 620, { cm: 2.4, wet: true, clear: 22, dens: deadDens, smin: 0.6, smax: 1.3, sy: [0.75, 1.3], tilt: 0.12, collide: 0.42, maxSlope: 0.55, skirt: 2 });
+    place(deadB, 110, { cm: 2.5, wet: true, clear: 26, dens: deadDens, smin: 0.6, smax: 1.1, tilt: 0.85, sink: 0.4, collide: 0.42, maxSlope: 0.5, skirt: 2 }); // leaning, half fallen
     deadB.build();
 
     // fallen logs: lie along the slope, half sunk into the litter. They block walking but are low enough to
     // jump over (each collider records the height of the log's top), and a dinosaur simply steps over them.
     {
-      const L = 8, r = 0.38, n = Math.round(240 * Q.veg * AREA), lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
+      const L = 8, r = 0.38, n = Math.round(240 * Q.veg * AREA * (W.COOP ? 1.3 : 1)), lg = new THREE.CylinderGeometry(r * 0.8, r, L, 12, 10, true), lp = lg.attributes.position, luv = lg.attributes.uv;
       for (let i = 0; i < lp.count; i++) {
         const x = lp.getX(i), y = lp.getY(i), z = lp.getZ(i), t = y / L + 0.5, a = Math.atan2(z, x);
         const k = 1 + (0.1 * Math.sin(a * 3 + t * 5) + 0.06 * Math.sin(a * 7 - t * 11)) * Math.min(1, Math.sin(Math.PI * t) * 3);
@@ -637,12 +714,12 @@
     // tall ferns: thickets you can hide in (they grow exactly where cover() says there is cover)
     const gParts = crown(11, 1.7, 0.65, 1.1, -1.05, rnd, 0.02, 4);
     const fernB = batch(merge(gParts.map(p => ({ geo: p.geo, group: 0 }))), fernMat, { far: 170 });
-    place(fernB, 44000, { q: Q.fern, clear: 6, dens: (x, z) => fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
+    place(fernB, 44000, { cm: 0.7, q: Q.fern, clear: 6, dens: (x, z) => fbm2(x / 35, z / 35, 203, 3) >= 0.4 ? 1 : 0, smin: 0.6, smax: 1.6, sy: [0.8, 1.25] }); fernB.build();
     // low plants: small ferns and seedlings covering the open floor, thick in clearings where light reaches the
     // ground and thin under closed canopy. Too low to hide in.
     {
       const dens = (x, z) => (0.3 + 0.7 * ss(0.35, 0.6, fbm2(x / 22, z / 22, 220, 2))) * (0.2 + 0.8 * (1 - canopy(x, z)));
-      for (let c = 0, tries = 0; c < 140000 * Q.veg * AREA && tries < 1400000 * AREA; tries++) {
+      for (let c = 0, tries = 0, n = 140000 * Q.veg * AREA * (W.COOP ? 0.5 : 1); c < n && tries < 1400000 * AREA; tries++) {
         const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
         if (rnd() > dens(x, z) || !kept(x, z)) continue;
         putLow(x, z); c++;
@@ -656,9 +733,134 @@
     const rockDens = (x, z) => ss(0.44, 0.6, fbm2(x / 50, z / 50, 206, 3));
     [[rockGeo(4, 3, 5), 180, 0.6, 3.2, 0.8], [rockGeo(4, 8, 8), 160, 0.5, 2.4, 0.75]].forEach(([g, n, smin, smax, col]) => {
       const B = batch(g, rockMat, { shadow: true, far: 190 });
-      place(B, n, { clear: 12, dens: rockDens, smin, smax, sink: 0.25, tilt: 0.45, collide: col, skirt: 2, clump: { n: 5, r0: 1.5, r: 3.5, B: stoneB, o: Object.assign({}, stone, { smax: 0.8 }) } }); B.build();
+      place(B, n, { cm: 0.4, clear: 12, dens: rockDens, smin, smax, sink: 0.25, tilt: 0.45, collide: col, skirt: 2, clump: { n: 5, r0: 1.5, r: 3.5, B: stoneB, o: Object.assign({}, stone, { smax: 0.8 }) } }); B.build();
     });
-    place(stoneB, 2200, Object.assign({ dens: (x, z) => ss(0.4, 0.6, fbm2(x / 30, z / 30, 208, 3)) }, stone)); stoneB.build();
+    place(stoneB, 2200, Object.assign({ cm: 0.5, dens: (x, z) => ss(0.4, 0.6, fbm2(x / 30, z / 30, 208, 3)) }, stone)); stoneB.build();
+
+    // ---- the swamp: open water, reed beds along it, and the mission sites (co-op) ----
+    let reedField = null;
+    const props = { caches: [], tower: null, camp: null, lz: null, fire: null };
+    if (W.COOP) {
+      // still, black water with a faint sheen
+      const wg = new THREE.PlaneGeometry(S, S, 1, 1); wg.rotateX(-Math.PI / 2);
+      const water = new THREE.Mesh(wg, new THREE.MeshStandardMaterial({ color: 0x0a1114, roughness: 0.06, metalness: 0.3, transparent: true, opacity: 0.9 }));
+      water.position.y = W.WATER; water.receiveShadow = true; scene.add(water);
+      // reeds: tufts of thin bent blades in the shallows and along the banks, tall enough to crouch in
+      reedField = (x, z) => { const d = W.WATER - W.height(x, z); return d > -0.4 && d < 0.95 ? ss(0.4, 0.56, fbm2(x / 24, z / 24, 230, 2)) : 0; };
+      const blades = [];
+      for (let i = 0; i < 12; i++) {
+        const h = 1.4 + rnd() * 1.2, g = new THREE.PlaneGeometry(0.07, h, 1, 5), p = g.attributes.position, bend = (rnd() - 0.3) * 0.5;
+        for (let k = 0; k < p.count; k++) { const y = p.getY(k) + h / 2, t = y / h; p.setXYZ(k, p.getX(k) * (1 - 0.8 * t) + bend * t * t * h * 0.4, y, 0); }
+        g.computeVertexNormals(); const a = rnd() * 6.283, r = rnd() * 0.35; g.rotateY(rnd() * 3.14); g.translate(Math.cos(a) * r, 0, Math.sin(a) * r);
+        blades.push({ geo: g, group: 0 });
+      }
+      const reedMat = new THREE.MeshStandardMaterial({ color: 0x6d6a42, roughness: 0.9, side: THREE.DoubleSide });
+      const reedB = batch(merge(blades), reedMat, { far: 120 });
+      for (let c = 0, tries = 0, n = 7000 * Q.veg; c < n && tries < n * 30; tries++) {
+        const x = (rnd() * 2 - 1) * HALF, z = (rnd() * 2 - 1) * HALF;
+        if (rnd() > reedField(x, z) || !okAt(x, z, 6, true)) continue;
+        const s = 0.7 + rnd() * 0.6, b = 0.6 + 0.5 * rnd();
+        dummy.position.set(x, W.height(x, z), z); dummy.rotation.set((rnd() - 0.5) * 0.15, rnd() * 6.283, (rnd() - 0.5) * 0.15); dummy.scale.set(s, s * (0.8 + 0.4 * rnd()), s); dummy.updateMatrix();
+        reedB.add(dummy.matrix, b, b * 0.97, b * 0.8); c++;
+      }
+      reedB.build();
+
+      const mat = (color, o) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.85 }, o || {}));
+      const glowSprite = (color, s) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.soft(), color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.8 })); sp.scale.setScalar(s); return sp; };
+      const ground = p => W.height(p.x, p.z);
+      // camp: a tent, a crate and a dying fire
+      {
+        const c = W.SITES.camp, g = new THREE.Group(); g.position.set(c.x, ground(c), c.z);
+        const tent = new THREE.Mesh(new THREE.ConeGeometry(2.3, 2.3, 4, 1, true), mat(0x4d5a34, { side: THREE.DoubleSide })); tent.rotation.y = Math.PI / 4; tent.position.set(-5, 1.15, -3); g.add(tent);
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 0.7, 0.7), mat(0x5d4a2e)); crate.position.set(3.5, 0.35, -2.5); g.add(crate);
+        for (let i = 0; i < 4; i++) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.1, 6), mat(0x2b2118)); l.rotation.set(Math.PI / 2 - 0.35, i * Math.PI / 2, 0); l.position.set(Math.sin(i * Math.PI / 2) * 0.3, 0.2, Math.cos(i * Math.PI / 2) * 0.3); g.add(l); }
+        const fire = new THREE.PointLight(0xff7a2e, 9, 16, 1.6); fire.position.set(0, 0.6, 0); g.add(fire);
+        const ember = glowSprite(0xff6a20, 1.6); ember.position.y = 0.3; g.add(ember);
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); props.camp = g; props.fire = { light: fire, ember };
+        colliders.push({ x: c.x - 5, z: c.z - 3, r: 1.7 }, { x: c.x + 3.5, z: c.z - 2.5, r: 0.6 });
+      }
+      // radio tower: a lattice mast with a red beacon on top (dark until it is repaired), the generator at its foot
+      {
+        const t = W.SITES.tower, g = new THREE.Group(), y0 = ground(t); g.position.set(t.x, y0, t.z);
+        const steel = mat(0x3a3d3c, { roughness: 0.6, metalness: 0.6 }), H = 18;
+        const leg = (ax, az) => {
+          const a = new V(ax * 1.6, 0, az * 1.6), b = new V(ax * 0.35, H, az * 0.35), m = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, a.distanceTo(b), 5), steel);
+          m.position.copy(a).lerp(b, 0.5); m.quaternion.setFromUnitVectors(new V(0, 1, 0), b.clone().sub(a).normalize()); return m;
+        };
+        [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([x, z]) => g.add(leg(x, z)));
+        for (let k = 1; k < 9; k++) { // braces
+          const y = k * H / 9, w = 1.6 - (1.6 - 0.35) * (y / H);
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(w * 1.41, 0.03, 3, 4), steel); ring.rotation.set(Math.PI / 2, 0, Math.PI / 4); ring.position.y = y; g.add(ring);
+        }
+        const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.2, 0.25, 12), steel); dish.rotation.z = Math.PI / 2; dish.position.set(0.5, H - 3, 0); g.add(dish);
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshBasicMaterial({ color: 0x401010 })); bulb.position.y = H + 0.2; g.add(bulb);
+        const beacon = new THREE.PointLight(0xff2010, 0, 60, 1.4); beacon.position.y = H + 0.2; g.add(beacon);
+        const halo = glowSprite(0xff2a10, 4); halo.position.y = H + 0.2; halo.material.opacity = 0; g.add(halo);
+        // generator and fuse box at the foot
+        const gen = new THREE.Group(); gen.position.set(4.2, 0, 0);
+        const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.1, 1.0), mat(0x4b5634, { roughness: 0.7, metalness: 0.3 })); body.position.y = 0.55; gen.add(body);
+        const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.25), mat(0x666a5c, { metalness: 0.4, roughness: 0.6 })); box.position.set(-2.6, 1.2, -1.6); gen.add(box);
+        const lampM = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd28a })); lampM.position.set(-2.6, 1.8, -1.6); gen.add(lampM);
+        const lamp = new THREE.PointLight(0xffc27a, 5, 14, 1.6); lamp.position.set(-2.6, 1.9, -1.4); gen.add(lamp);
+        g.add(gen);
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g);
+        props.tower = { group: g, beacon, halo, bulb, lamp, on: false, gen: new V(t.x + 4.2, y0, t.z), box: new V(t.x + 1.6, y0, t.z - 1.6) };
+        [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([x, z]) => colliders.push({ x: t.x + x * 1.6, z: t.z + z * 1.6, r: 0.25 }));
+        colliders.push({ x: t.x + 4.2, z: t.z, r: 0.9 });
+      }
+      // supply crates: a crate each with a lantern; some hold a fuse (game.js decides which)
+      W.SITES.caches.forEach((c, i) => {
+        const g = new THREE.Group(); g.position.set(c.x, ground(c), c.z); g.rotation.y = rnd() * 6.283;
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.85, 0.9), mat(0x5a4629)); crate.position.y = 0.42; g.add(crate);
+        const lid = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.08, 0.96), mat(0x4a3820)); lid.position.set(0, 0.88, 0.1); lid.rotation.x = -0.35; g.add(lid);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.8, 5), mat(0x2b2118)); pole.position.set(0.9, 0.9, 0); g.add(pole);
+        const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffcf7a })); lantern.position.set(0.9, 1.75, 0); g.add(lantern);
+        const glow = glowSprite(0xffb050, 2.2); glow.position.copy(lantern.position); g.add(glow);
+        g.traverse(o => { if (o.isMesh && o !== lantern) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); props.caches.push({ group: g, glow, lantern, pos: c.clone().setY(ground(c)), ph: rnd() * 6 });
+        colliders.push({ x: c.x, z: c.z, r: 0.75 });
+      });
+      // the way out (only the one this game uses is built); the red flare is lit when it is time to board
+      const ES = W.SITES, l = ES.lz, face = Math.atan2(ES.out.x, ES.out.z);
+      if (ES.esc === 0) { // landing zone: a ring of stakes round a flattened clearing
+        const g = new THREE.Group(); g.position.set(l.x, ground(l), l.z);
+        for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283, s = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.1, 5), mat(0x8a7a50)); s.position.set(Math.sin(a) * 9, 0.5, Math.cos(a) * 9); s.rotation.z = (rnd() - 0.5) * 0.3; g.add(s); }
+        scene.add(g); props.lz = g;
+        props.esc = { kind: 0, act: ES.tower };
+      } else if (ES.esc === 1) { // a jetty out over the pool, and an old motor boat tied to its end
+        const g = new THREE.Group(); g.position.set(l.x, 0, l.z); g.rotation.y = face;
+        const wood = mat(0x4a3a26), y0 = Math.max(ground(l), W.WATER) + 0.35;
+        for (let i = 0; i < 9; i++) { const p = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.5), wood); p.position.set(0, y0, -1 + i * 0.6); p.rotation.z = (rnd() - 0.5) * 0.04; g.add(p); }
+        [[-1.1, 0], [1.1, 0], [-1.1, 4.2], [1.1, 4.2]].forEach(([x, z]) => { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 2.6, 6), wood); s.position.set(x, y0 - 0.9, z); g.add(s); });
+        const boat = new THREE.Group(); boat.position.set(0, W.WATER + 0.05, 11);
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.7, 5.2), mat(0x2f4a52, { roughness: 0.7 })); hull.position.y = 0.2; boat.add(hull);
+        const bow = new THREE.Mesh(new THREE.ConeGeometry(1.05, 1.6, 4, 1), mat(0x2f4a52, { roughness: 0.7 })); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(1, 1, 0.45); bow.position.set(0, 0.2, 3.4); boat.add(bow);
+        const motor = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.5), mat(0x222222, { metalness: 0.4 })); motor.position.set(0, 0.7, -2.7); boat.add(motor);
+        g.add(boat);
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); props.lz = g; props.boat = boat;
+        props.esc = { kind: 1, act: ES.lz.clone().addScaledVector(ES.out, 4) }; // the engine is started from the jetty's end
+      } else { // a mine tunnel: a heap of rock with a timbered mouth, barred by a gate until it is forced open
+        const g = new THREE.Group(); g.position.set(l.x, ground(l), l.z); g.rotation.y = face;
+        const rock = mat(0x3c3a36, { roughness: 0.95 });
+        const heap = new THREE.Mesh(new THREE.DodecahedronGeometry(9, 1), rock); heap.scale.set(1.5, 0.95, 1.1); heap.position.set(0, 2, 10); g.add(heap);
+        [[-7, 1, 6, 4], [7, 0.5, 7, 4.5], [0, 7, 9, 5]].forEach(([x, y, z, r]) => { const b = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rock); b.position.set(x, y, z); b.rotation.set(rnd() * 3, rnd() * 3, 0); g.add(b); });
+        const hole = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), new THREE.MeshBasicMaterial({ color: 0x000000 })); hole.position.set(0, 1.8, 0.7); hole.rotation.y = Math.PI; g.add(hole);
+        const wood = mat(0x4a3a26);
+        [[-2, 1.9], [2, 1.9]].forEach(([x, y]) => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.8, 0.3), wood); p.position.set(x, y, 0.5); g.add(p); });
+        const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 0.35), wood); lintel.position.set(0, 3.8, 0.5); g.add(lintel);
+        const gate = new THREE.Group(); gate.position.set(-1.8, 0, 0.2);
+        for (let i = 0; i < 5; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.2, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(0.3 + i * 0.75, 1.65, 0); gate.add(b); }
+        [0.7, 2.6].forEach(y => { const b = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.12, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(1.8, y, 0); gate.add(b); });
+        g.add(gate);
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); props.lz = g; props.gate = gate;
+        const back = l.clone().addScaledVector(ES.out, 11); colliders.push({ x: back.x, z: back.z, r: 9.5 });
+        props.esc = { kind: 2, act: ES.lz.clone().addScaledVector(ES.out, -1.5) }; // forced open from just in front of the gate
+      }
+    }
 
     // ---- drifting motes (dust, pollen, tiny insects) that catch the light: moving specks at different depths
     // are what make the space between the trunks read as air ----
@@ -666,12 +868,17 @@
     const moteGeo = new THREE.BufferGeometry(), mp = new Float32Array(MOTES * 3);
     for (let i = 0; i < MOTES; i++) { mp[i * 3] = (rnd() * 2 - 1) * MBOX; mp[i * 3 + 1] = rnd() * 12; mp[i * 3 + 2] = (rnd() * 2 - 1) * MBOX; }
     moteGeo.setAttribute('position', new THREE.BufferAttribute(mp, 3));
-    const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({ map: soft, size: 0.075, transparent: true, depthWrite: false, opacity: 0.5, color: 0xfff2cf }));
+    // (at night in the swamp they are fireflies instead: larger, greenish, glowing and blinking)
+    const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial(NIGHT
+      ? { map: soft, size: 0.16, transparent: true, depthWrite: false, opacity: 0.8, color: 0xc6ff70, blending: THREE.AdditiveBlending, fog: false }
+      : { map: soft, size: 0.075, transparent: true, depthWrite: false, opacity: 0.5, color: 0xfff2cf }));
     motes.frustumCulled = false; scene.add(motes);
 
     // ---- extraction beacon (red flare smoke) ----
+    // (co-op: unlit until the helicopter is on its way, see setGoal)
+    let goalOn = !W.COOP;
     const goalY = W.height(W.GOAL.x, W.GOAL.z);
-    const flare = new THREE.PointLight(0xff3a1a, 30, 40, 1.6); flare.position.set(W.GOAL.x, goalY + 1, W.GOAL.z); scene.add(flare);
+    const flare = new THREE.PointLight(0xff3a1a, goalOn ? 30 : 0, 40, 1.6); flare.position.set(W.GOAL.x, goalY + 1, W.GOAL.z); scene.add(flare);
     const smokes = [];
     for (let i = 0; i < 40; i++) {
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: soft, color: 0xd8584a, transparent: true, depthWrite: false, opacity: 0.5 }));
@@ -679,6 +886,8 @@
     }
     const flareCore = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd0a0 }));
     flareCore.position.copy(flare.position).y -= 0.8; scene.add(flareCore);
+    const showGoal = on => { goalOn = on; flareCore.visible = on; smokes.forEach(s => s.visible = on); if (!on) flare.intensity = 0; };
+    showGoal(goalOn);
 
     // colliders in a coarse grid, so pushing something out of them only looks at the few nearby
     const CG = 8, cgrid = new Map(), ckey = (ix, iz) => (ix + 512) * 2048 + iz + 512;
@@ -686,8 +895,17 @@
 
     const owned = scene.children.filter(o => !before.has(o)); // everything this map put into the scene
     const extraTex = [cliffTex];                                 // textures that only a shader patch refers to
+    const sun0 = sun.intensity, hemi0 = hemi.intensity;
+    let flashK = 0;
     const world = {
-      scene, sun, sunDir, colliders, terrain, chunks, seed: SEED,
+      scene, sun, sunDir, colliders, terrain, chunks, seed: SEED, props, night: NIGHT,
+      // co-op: light the landing-zone flare / the tower's beacon
+      setGoal(on) { showGoal(!!on); },
+      setTower(on) { if (props.tower) props.tower.on = !!on; },
+      // the tunnel gate swings open (k 0..1)
+      setGate(k) { if (props.gate) props.gate.rotation.y = k * 1.9; },
+      // lightning: k (0..1) brightens the whole night for a moment
+      flash(k) { flashK = Math.max(flashK, k); },
       // take this map out of the scene and free its GPU memory (geometry, materials, textures, environment map)
       dispose() {
         const geos = new Set(), mats = new Set(), texs = new Set(extraTex);
@@ -706,11 +924,26 @@
           if (m.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k].value; if (v && v.isTexture) texs.add(v); }
         }
         geos.forEach(g => g.dispose()); mats.forEach(m => m.dispose()); texs.forEach(t => t.dispose());
-        if (scene.environment === envRT.texture) scene.environment = null;
-        envRT.dispose(); scene.fog = null;
+        if (envRT) { if (scene.environment === envRT.texture) scene.environment = null; envRT.dispose(); }
+        scene.fog = null; scene.background = null;
       },
       update(dt, t, focus) {
         wind.value = t;
+        if (NIGHT) {
+          // lightning, the fire, the crates' lanterns and the tower's beacon
+          flashK = Math.max(0, flashK - dt * 3.2);
+          sun.intensity = sun0 + flashK * 3.5; hemi.intensity = hemi0 + flashK * 2.2;
+          if (scene.fog) scene.fog.color.setRGB(0.05 + flashK * 0.35, 0.064 + flashK * 0.38, 0.075 + flashK * 0.42, THREE.SRGBColorSpace);
+          if (props.fire) { const f = 0.75 + 0.25 * Math.sin(t * 17) * Math.sin(t * 7.3); props.fire.light.intensity = 9 * f; props.fire.ember.material.opacity = 0.6 + 0.3 * f; }
+          props.caches.forEach(c => { const f = 0.7 + 0.3 * Math.sin(t * 9 + c.ph) * Math.sin(t * 3.1 + c.ph * 2); c.glow.material.opacity = (c.dim ? 0.15 : 0.75) * f; });
+          const tw = props.tower;
+          if (tw) {
+            const on = tw.on ? (Math.sin(t * 3.5) > 0 ? 1 : 0.15) : 0;
+            tw.beacon.intensity = 60 * on; tw.halo.material.opacity = 0.9 * on; tw.bulb.material.color.setHex(on > 0.5 ? 0xff4030 : 0x401010);
+          }
+          motes.material.opacity = 0.55 + 0.35 * Math.sin(t * 2.3);
+          if (props.boat) { props.boat.position.y = W.WATER + 0.05 + Math.sin(t * 1.3) * 0.05; props.boat.rotation.z = Math.sin(t * 0.9) * 0.03; }
+        }
         sun.position.copy(focus).addScaledVector(sunDir, 175); sun.target.position.copy(focus);
         // draw only the chunks near enough to be seen through the fog
         for (const c of chunks) c.im.visible = Math.hypot(c.x - focus.x, c.z - focus.z) - c.r < c.far;
@@ -723,6 +956,7 @@
           mp[i * 3] = x; mp[i * 3 + 1] = y; mp[i * 3 + 2] = z;
         }
         moteGeo.attributes.position.needsUpdate = true;
+        if (!goalOn) return;
         flare.intensity = 26 + Math.sin(t * 23) * 6 + Math.sin(t * 7) * 4;
         smokes.forEach(s => {
           const k = (s.userData.t + t * 0.025) % 1;
@@ -746,7 +980,8 @@
         }
       },
       // fern density at a point (for hiding)
-      cover(x, z) { return fbm2(x / 35, z / 35, 203, 3); }
+      // (the swamp: reed beds hide you as well as fern thickets)
+      cover(x, z) { const f = fbm2(x / 35, z / 35, 203, 3); return reedField ? Math.max(f, 0.3 + 0.4 * reedField(x, z)) : f; }
     };
     return world;
   };

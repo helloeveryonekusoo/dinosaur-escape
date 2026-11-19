@@ -11,12 +11,27 @@
     adren: { name: 'アドレナリン', icon: '💉', glow: 0xffd060, desc: 'スタミナ全快＋10秒間 息切れせず速く走れる' },
     radar: { name: '動体探知機', icon: '📡', glow: 0x70ffb0, desc: '25秒間 ティラノの位置と距離がコンパスに出る' }
   };
-  const ORDER = ['flare', 'meat', 'dart', 'camo', 'adren', 'radar'];
-  const COUNTS = { flare: 7, meat: 5, dart: 4, camo: 4, adren: 5, radar: 4 };
-  DG.ITEM_TYPES = TYPES; DG.ITEM_ORDER = ORDER;
+  // co-op has its own set: things to throw or set, to move with, to help each other, and strong ones with a price
+  Object.assign(TYPES, {
+    cracker: { name: '爆竹', icon: '🧨', glow: 0xff6040, desc: '投げると6秒間はじけ続け、90m以内の捕食者を音で引き寄せる' },
+    trap: { name: 'トラバサミ', icon: '🪤', glow: 0xc8c8c8, desc: '目の前に仕掛ける。踏んだ捕食者は7秒間動けない' },
+    flash: { name: '閃光弾', icon: '💥', glow: 0xffffff, desc: '投げると強い光で、20m以内の捕食者の目を5秒間くらませ、獲物を見失わせる' },
+    hook: { name: 'ワイヤーフック', icon: '🪝', glow: 0x80c0ff, desc: '狙った木・岩・地面（30m以内）へワイヤーで一気に飛びつく' },
+    medkit: { name: '救急キット', icon: '⛑️', glow: 0xff5050, desc: 'そばにいる幽霊の仲間を1人生き返らせる（5m以内）' },
+    signal: { name: '信号銃', icon: '🎆', glow: 0xff3060, desc: '空に打ち上げ、30秒間 仲間のコンパスに自分の位置を示す。ただし150m以内の捕食者も呼び寄せる' },
+    stim: { name: '興奮剤', icon: '💊', glow: 0xffd060, desc: '12秒間 疲れずに速く走れる。切れると8秒間 足が重くなる' },
+    dyn: { name: 'ダイナマイト', icon: '💣', glow: 0xff9040, desc: '投げて3秒後に爆発。12m以内の捕食者を8秒間気絶させるが、爆音でマップ中の捕食者を呼び寄せる' }
+  });
+  const CLASSIC = ['flare', 'meat', 'dart', 'camo', 'adren', 'radar'];
+  const COOP_SET = ['dart', 'cracker', 'trap', 'flash', 'hook', 'medkit', 'signal', 'stim', 'dyn'];
+  let ORDER = CLASSIC;
+  const COUNTS = { flare: 7, meat: 5, dart: 4, camo: 4, adren: 5, radar: 4, cracker: 6, trap: 4, flash: 4, hook: 5, medkit: 2, signal: 3, stim: 4, dyn: 2 };
+  const COOP_COUNTS = { dart: 3 };
+  DG.ITEM_TYPES = TYPES; DG.ITEM_ORDER = ORDER; DG.COOP_ITEMS = COOP_SET;
   // pickups of each kind at a given difficulty multiplier (never fewer than one of a kind), and their total
-  const countOf = (type, mult) => Math.max(1, Math.round(COUNTS[type] * (mult == null ? 1 : mult)));
+  const countOf = (type, mult) => Math.max(1, Math.round((ORDER === COOP_SET && COOP_COUNTS[type] || COUNTS[type]) * (mult == null ? 1 : mult)));
   DG.itemTotal = mult => ORDER.reduce((s, k) => s + countOf(k, mult), 0);
+  const THROWN = { flare: 19, meat: 14, cracker: 17, flash: 18, dyn: 15 };
 
   function mkMesh(type) {
     const g = new THREE.Group();
@@ -43,6 +58,30 @@
       const body = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 12), std(0xd8e8f0, 0.2)); body.rotation.z = Math.PI / 2; g.add(body);
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.06, 12), std(0xff8a1a, 0.4, 0x331800)); cap.rotation.z = Math.PI / 2; cap.position.x = 0.12; g.add(cap);
       const needle = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.08, 6), std(0xcccccc, 0.2)); needle.rotation.z = Math.PI / 2; needle.position.x = -0.14; g.add(needle);
+    } else if (type === 'cracker' || type === 'dyn') {
+      const n = type === 'dyn' ? 3 : 1;
+      for (let i = 0; i < n; i++) { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.24, 10), std(type === 'dyn' ? 0xb02418 : 0xd83a20, 0.5)); s.rotation.z = Math.PI / 2; s.position.set(0, i * 0.055, (i - 1) * 0.03 * (n > 1 ? 1 : 0)); g.add(s); }
+      const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.1, 4), std(0x333333, 0.8)); wick.position.set(0.15, 0.03, 0); wick.rotation.z = 0.8; g.add(wick);
+    } else if (type === 'trap') {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.02, 6, 20), std(0x8a8a86, 0.4)); ring.rotation.x = Math.PI / 2; g.add(ring);
+      for (let i = 0; i < 10; i++) { const a = i / 10 * 6.283, t = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.08, 4), std(0x9a9a96, 0.3)); t.position.set(Math.cos(a) * 0.22, 0.04, Math.sin(a) * 0.22); g.add(t); }
+      const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.02, 12), std(0x6a6a66, 0.5)); g.add(plate);
+    } else if (type === 'flash') {
+      const can = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 12), std(0x3a4a3a, 0.5)); g.add(can);
+      const pin = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.006, 4, 10), std(0xcccccc, 0.3)); pin.position.y = 0.09; g.add(pin);
+    } else if (type === 'hook') {
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.2), std(0x2a3442, 0.6)); g.add(grip);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), std(0xb0b4b8, 0.3)); tip.rotation.x = -Math.PI / 2; tip.position.z = -0.16; g.add(tip);
+    } else if (type === 'medkit') {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.16), std(0xe8e4dc, 0.5)); g.add(box);
+      const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.005, 0.03), std(0xd02020, 0.5)); c1.position.y = 0.062; g.add(c1);
+      const c2 = c1.clone(); c2.rotation.y = Math.PI / 2; g.add(c2);
+    } else if (type === 'signal') {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.22), std(0xd06a10, 0.5)); g.add(body);
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 10), std(0xd06a10, 0.5)); bar.rotation.x = Math.PI / 2; bar.position.set(0, 0.05, -0.12); g.add(bar);
+    } else if (type === 'stim') {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.1, 10), std(0xe0b030, 0.35)); g.add(b);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.043, 0.03, 10), std(0xf0f0f0, 0.4)); cap.position.y = 0.065; g.add(cap);
     } else {
       const box = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.24), std(0x2a2e2a, 0.6)); g.add(box);
       const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.11, 0.12), new THREE.MeshBasicMaterial({ color: 0x3cff90 })); scr.rotation.x = -Math.PI / 2; scr.position.set(0, 0.031, 0.02); g.add(scr);
@@ -55,7 +94,7 @@
   DG.makeItems = function (ctx) {
     const { scene, P, camera, msg, A } = ctx;
     const soft = DG.T.soft();
-    const S = { inv: {}, sel: 0, adren: 0, radar: 0, pickups: [], proj: [], baits: [] };
+    const S = { inv: {}, sel: 0, adren: 0, radar: 0, stim: 0, crash: 0, pickups: [], proj: [], baits: [], fxs: [] };
     const hudEl = document.getElementById('inv');
 
     function glow(color) {
@@ -87,8 +126,22 @@
     function clear() {
       [...S.pickups, ...S.proj, ...S.baits].forEach(o => scene.remove(o.mesh));
       S.flares.forEach(removeFlare);
-      S.pickups = []; S.proj = []; S.baits = []; S.flares = [];
+      S.fxs.forEach(f => f.objs.forEach(o => scene.remove(o)));
+      S.pickups = []; S.proj = []; S.baits = []; S.flares = []; S.fxs = [];
     }
+    // co-op effects where a thrown thing lands (also shown on the other players' screens, sent by the host):
+    // a firecracker sputters and pops for 6 s, a flashbang goes off in a white flash, dynamite fizzes 3 s and blows up
+    S.fxAt = function (type, pos, mesh) {
+      const objs = [];
+      if (mesh) objs.push(mesh); else if (type === 'cracker' || type === 'dyn') { mesh = mkMesh(type); mesh.position.copy(pos); scene.add(mesh); objs.push(mesh); }
+      const halo = glow(type === 'flash' ? 0xffffff : 0xffa040); halo.position.copy(pos).y += 0.2; halo.scale.setScalar(0.01); scene.add(halo); objs.push(halo);
+      S.fxs.push({ type, pos: pos.clone(), t: 0, dur: type === 'cracker' ? 6 : type === 'dyn' ? 3.6 : 1.2, objs, halo, popT: 0, boom: false });
+    };
+    // an item handed over (a crate's find)
+    S.give = function (type, n) {
+      if (!TYPES[type] || !ORDER.includes(type)) return;
+      S.inv[type] = (S.inv[type] || 0) + (n || 1); msg(`${TYPES[type].icon} ${TYPES[type].name}を手に入れた`, 2.2); A.pickup && A.pickup(); renderHud();
+    };
     // df: the difficulty level ({items, startFlare, flareTime}); omitted = the original, easy values
     // opt.seed: lay the pickups out from this seed (a race: every player gets the same layout);
     // opt.starts: as many pickups as for this many players (a race has three)
@@ -101,7 +154,10 @@
       clear();
       df = df || { items: 1, startFlare: 1, flareTime: 20 }; opt = opt || {};
       FLARE_TIME = df.flareTime; TYPES.flare.desc = flareDesc();
-      S.inv = { flare: df.startFlare, meat: 0, dart: 0, camo: 0, adren: 0, radar: 0 }; S.sel = 0; S.adren = 0; S.radar = 0; S.camo = 0;
+      ORDER = opt.set === 'coop' ? COOP_SET : CLASSIC; DG.ITEM_ORDER = ORDER;
+      S.inv = {}; ORDER.forEach(k => S.inv[k] = 0);
+      if (opt.set === 'coop') Object.assign(S.inv, opt.inv || {}); else S.inv.flare = df.startFlare;
+      S.sel = 0; S.adren = 0; S.radar = 0; S.camo = 0; S.stim = 0; S.crash = 0;
       const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START], ar = opt.around;
       S.claim = opt.claim || null;
       ORDER.forEach(type => {
@@ -142,14 +198,19 @@
     S.use = function () {
       const type = ORDER[S.sel], T = TYPES[type];
       if (!S.inv[type]) { msg(T.name + 'を持っていない', 1.5); return; }
+      // co-op items the game itself carries out (it may refuse: nobody to revive, nothing to hook on to…)
+      if (['trap', 'hook', 'medkit', 'signal'].includes(type)) { if (DG.coItem && DG.coItem(type)) { S.inv[type]--; renderHud(); } return; }
+      if (THROWN[type] && DG.coCanThrow && !DG.coCanThrow()) { msg('荷物を運んでいる間は投げられない', 1.8); return; }
       S.inv[type]--;
-      if (type === 'flare' || type === 'meat') {
+      if (THROWN[type]) {
         const dir = new V(-Math.sin(P.yaw) * Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw) * Math.cos(P.pitch));
         const mesh = mkMesh(type); const pos = P.pos.clone().addScaledVector(dir, 0.6); pos.y -= 0.2;
         mesh.position.copy(pos); scene.add(mesh);
-        const vel = dir.multiplyScalar(type === 'flare' ? 19 : 14).add(new V(0, 3, 0));
+        const vel = dir.multiplyScalar(THROWN[type]).add(new V(0, 3, 0));
         S.proj.push({ type, mesh, pos, vel, spin: new V(Math.random() * 8, Math.random() * 8, 0) });
         A.whoosh && A.whoosh();
+      } else if (type === 'stim') {
+        S.stim = 12; S.crash = 0; P.stam = 1; P.exhausted = false; msg('💊 興奮剤を飲んだ！ 12秒間 全力で走れる（切れると足が重くなる）', 2.5);
       } else if (type === 'dart') {
         A.dart && A.dart();
         const hit = DG.dartShot && DG.dartShot();
@@ -174,6 +235,8 @@
     S.view = () => S.pickups.forEach(p => { if (!p.taken) view(p); }); // for someone only watching
     S.update = function (dt, t) {
       S.adren = Math.max(0, S.adren - dt); S.radar = Math.max(0, S.radar - dt); S.camo = Math.max(0, S.camo - dt);
+      if (S.stim > 0) { S.stim -= dt; if (S.stim <= 0) { S.stim = 0; S.crash = 8; msg('💊 興奮剤が切れた… 足が重い', 2.2); } }
+      else S.crash = Math.max(0, S.crash - dt);
       // pickups: bob, spin, collect
       const feet = P.pos.y - P.eye, now = performance.now();
       S.pickups.forEach((p, i) => {
@@ -197,6 +260,9 @@
           if (o.type === 'flare') {
             const f = igniteFlare(o.mesh, o.pos);
             DG.lure && DG.lure(f.pos, 'flare', f);
+          } else if (o.type !== 'meat') { // co-op throwables: the effect here, and the game tells the host
+            o.mesh.rotation.set(0, Math.random() * 6, 0); S.fxAt(o.type, o.pos, o.mesh);
+            DG.coLand && DG.coLand(o.type, o.pos);
           } else {
             o.mesh.rotation.set(0, Math.random() * 6, 0);
             const b = { mesh: o.mesh, pos: o.pos.clone(), eaten: false }; S.baits.push(b);
@@ -217,6 +283,26 @@
           s.scale.setScalar(0.6 + k * 5); s.material.opacity = 0.45 * (1 - k) * Math.min(1, k * 6) * Math.min(1, (f.t + 3) / 3);
         });
         if (f.t < -3) { removeFlare(f); S.flares.splice(i, 1); }
+      }
+      // co-op throwables going off
+      for (let i = S.fxs.length - 1; i >= 0; i--) {
+        const f = S.fxs[i]; f.t += dt;
+        if (f.type === 'cracker') {
+          f.popT -= dt;
+          if (f.popT <= 0 && f.t < f.dur) { f.popT = 0.08 + Math.random() * 0.3; A.pop && A.pop(f.pos); f.halo.scale.setScalar(1.5 + Math.random() * 2.5); f.halo.material.opacity = 0.9; }
+          else f.halo.material.opacity *= Math.exp(-dt * 14);
+        } else if (f.type === 'flash' || f.type === 'dyn') {
+          const at = f.type === 'flash' ? 0.5 : 3;
+          if (!f.boom && f.t < at) { f.halo.scale.setScalar(f.type === 'dyn' ? 0.5 + Math.random() * 0.5 : 0.01); f.halo.material.opacity = 0.8; }
+          if (!f.boom && f.t >= at) {
+            f.boom = true; if (f.objs[0] !== f.halo) { scene.remove(f.objs[0]); }
+            if (f.type === 'flash') A.bang && A.bang(f.pos); else A.boom && A.boom(f.pos);
+            DG.coFxLocal && DG.coFxLocal(f.type, f.pos);
+          }
+          if (f.boom) { const k = (f.t - at) / 0.8; f.halo.scale.setScalar((f.type === 'dyn' ? 26 : 34) * Math.min(1, k * 3 + 0.3)); f.halo.material.opacity = Math.max(0, 1 - k); }
+          f.dur = at + 0.9;
+        }
+        if (f.t >= f.dur) { f.objs.forEach(o => scene.remove(o)); S.fxs.splice(i, 1); }
       }
     };
 
