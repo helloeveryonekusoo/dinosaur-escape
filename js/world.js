@@ -770,17 +770,29 @@
       const mat = (color, o) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.85 }, o || {}));
       const glowSprite = (color, s) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: T.soft(), color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.8 })); sp.scale.setScalar(s); return sp; };
       const ground = p => W.height(p.x, p.z);
+      // a CC0 model (js/props.js) added to g if it has loaded; null otherwise (the simple shape is kept)
+      const model = (g, n, size, x, y, z, opt, ry) => { const o = DG.PROPS && DG.PROPS.get(n, size, opt); if (o) { o.position.set(x, y, z); o.rotation.y = ry || 0; g.add(o); } return o; };
       // camp: a tent, a crate and a dying fire
       {
         const c = W.SITES.camp, g = new THREE.Group(); g.position.set(c.x, ground(c), c.z);
-        const tent = new THREE.Mesh(new THREE.ConeGeometry(2.3, 2.3, 4, 1, true), mat(0x4d5a34, { side: THREE.DoubleSide })); tent.rotation.y = Math.PI / 4; tent.position.set(-5, 1.15, -3); g.add(tent);
-        const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 0.7, 0.7), mat(0x5d4a2e)); crate.position.set(3.5, 0.35, -2.5); g.add(crate);
-        for (let i = 0; i < 4; i++) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.1, 6), mat(0x2b2118)); l.rotation.set(Math.PI / 2 - 0.35, i * Math.PI / 2, 0); l.position.set(Math.sin(i * Math.PI / 2) * 0.3, 0.2, Math.cos(i * Math.PI / 2) * 0.3); g.add(l); }
+        { // a ridge tent: a three-sided prism lying on one face, with its two ends open
+          const tent = new THREE.Group(); tent.position.set(-5, 0.625, -3); tent.rotation.y = 0.6; g.add(tent);
+          const roof = new THREE.CylinderGeometry(1.25, 1.25, 3.2, 3, 1, true).rotateZ(-Math.PI / 2).rotateX(-Math.PI / 2); // ridge along x, a flat face down
+          tent.add(new THREE.Mesh(roof, mat(0x4d5a34, { side: THREE.DoubleSide, roughness: 0.95 })));
+          const back = new THREE.CircleGeometry(1.25, 3).rotateZ(Math.PI / 2).rotateY(-Math.PI / 2).translate(-1.6, 0, 0);
+          tent.add(new THREE.Mesh(back, mat(0x435030, { side: THREE.DoubleSide, roughness: 0.95 })));
+        }
+        const cr = model(g, 'crate', 0.9, 3.5, 0, -2.5, { fit: 'x' }, 0.3); // two military crates, one on the other
+        if (cr) model(g, 'crate', 0.9, 3.55, cr.userData.size.y, -2.45, { fit: 'x' }, 0.5);
+        else { const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 0.7, 0.7), mat(0x5d4a2e)); crate.position.set(3.5, 0.35, -2.5); g.add(crate); }
+        model(g, 'barrel', 0.9, 4.7, 0, -1.3, { fit: 'h' });
+        if (model(g, 'bonfire', 1.5, 0, -0.1, 0)) for (let i = 0; i < 3; i++) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.9, 6), mat(0x2b2118)); l.rotation.set(Math.PI / 2 - 0.3, i * 2.1, 0); l.position.set(Math.sin(i * 2.1) * 0.15, 0.12, Math.cos(i * 2.1) * 0.15); g.add(l); }
+        else for (let i = 0; i < 4; i++) { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.1, 6), mat(0x2b2118)); l.rotation.set(Math.PI / 2 - 0.35, i * Math.PI / 2, 0); l.position.set(Math.sin(i * Math.PI / 2) * 0.3, 0.2, Math.cos(i * Math.PI / 2) * 0.3); g.add(l); }
         const fire = new THREE.PointLight(0xff7a2e, 9, 16, 1.6); fire.position.set(0, 0.6, 0); g.add(fire);
         const ember = glowSprite(0xff6a20, 1.6); ember.position.y = 0.3; g.add(ember);
         g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g); props.camp = g; props.fire = { light: fire, ember };
-        colliders.push({ x: c.x - 5, z: c.z - 3, r: 1.7 }, { x: c.x + 3.5, z: c.z - 2.5, r: 0.6 });
+        colliders.push({ x: c.x - 5, z: c.z - 3, r: 1.7 }, { x: c.x + 3.5, z: c.z - 2.5, r: 0.6 }, { x: c.x + 4.7, z: c.z - 1.3, r: 0.45 });
       }
       // radio tower: a lattice mast with a red beacon on top (dark until it is repaired), the generator at its foot
       {
@@ -801,22 +813,29 @@
         const halo = glowSprite(0xff2a10, 4); halo.position.y = H + 0.2; halo.material.opacity = 0; g.add(halo);
         // generator and fuse box at the foot
         const gen = new THREE.Group(); gen.position.set(4.2, 0, 0);
-        const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.1, 1.0), mat(0x4b5634, { roughness: 0.7, metalness: 0.3 })); body.position.y = 0.55; gen.add(body);
-        const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.25), mat(0x666a5c, { metalness: 0.4, roughness: 0.6 })); box.position.set(-2.6, 1.2, -1.6); gen.add(box);
+        if (!model(gen, 'generator', 1.3, 0, 0, 0, { fit: 'x' })) { const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.1, 1.0), mat(0x4b5634, { roughness: 0.7, metalness: 0.3 })); body.position.y = 0.55; gen.add(body); }
+        // the fuse box, on a wooden post
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 2.1, 6), mat(0x3a2e20)); post.position.set(-2.6, 1.05, -1.97); gen.add(post);
+        if (!model(gen, 'powerbox', 0.7, -2.6, 0.9, -1.6, { fit: 'h' })) { const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.25), mat(0x666a5c, { metalness: 0.4, roughness: 0.6 })); box.position.set(-2.6, 1.2, -1.6); gen.add(box); }
         const lampM = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd28a })); lampM.position.set(-2.6, 1.8, -1.6); gen.add(lampM);
         const lamp = new THREE.PointLight(0xffc27a, 5, 14, 1.6); lamp.position.set(-2.6, 1.9, -1.4); gen.add(lamp);
         g.add(gen);
+        model(g, 'barrel', 0.9, 4.4, 0, 1.4, { fit: 'h' }); model(g, 'barrel', 0.9, 5.3, 0, 1.1, { fit: 'h' }, 1.2); // fuel drums by the generator
         g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g);
         props.tower = { group: g, beacon, halo, bulb, lamp, on: false, gen: new V(t.x + 4.2, y0, t.z), box: new V(t.x + 1.6, y0, t.z - 1.6) };
         [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([x, z]) => colliders.push({ x: t.x + x * 1.6, z: t.z + z * 1.6, r: 0.25 }));
-        colliders.push({ x: t.x + 4.2, z: t.z, r: 0.9 });
+        colliders.push({ x: t.x + 4.2, z: t.z, r: 0.9 }, { x: t.x + 4.85, z: t.z + 1.25, r: 0.9 });
       }
       // supply crates: a crate each with a lantern; some hold a fuse (game.js decides which)
       W.SITES.caches.forEach((c, i) => {
         const g = new THREE.Group(); g.position.set(c.x, ground(c), c.z); g.rotation.y = rnd() * 6.283;
-        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.85, 0.9), mat(0x5a4629)); crate.position.y = 0.42; g.add(crate);
-        const lid = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.08, 0.96), mat(0x4a3820)); lid.position.set(0, 0.88, 0.1); lid.rotation.x = -0.35; g.add(lid);
+        const cr = model(g, 'crate', 1.1, 0, 0, 0, { fit: 'x' }); // two military crates, one on the other
+        if (cr) model(g, 'crate', 1.0, 0.05, cr.userData.size.y, 0.03, { fit: 'x' }, 0.12);
+        else {
+          const crate = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.85, 0.9), mat(0x5a4629)); crate.position.y = 0.42; g.add(crate);
+          const lid = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.08, 0.96), mat(0x4a3820)); lid.position.set(0, 0.88, 0.1); lid.rotation.x = -0.35; g.add(lid);
+        }
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.8, 5), mat(0x2b2118)); pole.position.set(0.9, 0.9, 0); g.add(pole);
         const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffcf7a })); lantern.position.set(0.9, 1.75, 0); g.add(lantern);
         const glow = glowSprite(0xffb050, 2.2); glow.position.copy(lantern.position); g.add(glow);
@@ -834,8 +853,10 @@
       } else if (ES.esc === 1) { // a jetty out over the pool, and an old motor boat tied to its end
         const g = new THREE.Group(); g.position.set(l.x, 0, l.z); g.rotation.y = face;
         const wood = mat(0x4a3a26), y0 = Math.max(ground(l), W.WATER) + 0.35;
-        for (let i = 0; i < 9; i++) { const p = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.5), wood); p.position.set(0, y0, -1 + i * 0.6); p.rotation.z = (rnd() - 0.5) * 0.04; g.add(p); }
-        [[-1.1, 0], [1.1, 0], [-1.1, 4.2], [1.1, 4.2]].forEach(([x, z]) => { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 2.6, 6), wood); s.position.set(x, y0 - 0.9, z); g.add(s); });
+        if (!model(g, 'dock', 6.4, 0, y0 - 3.6, 1.4, { fit: 'z' })) { // (the model's deck is 3.6 m above the foot of its piles)
+          for (let i = 0; i < 9; i++) { const p = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.5), wood); p.position.set(0, y0, -1 + i * 0.6); p.rotation.z = (rnd() - 0.5) * 0.04; g.add(p); }
+          [[-1.1, 0], [1.1, 0], [-1.1, 4.2], [1.1, 4.2]].forEach(([x, z]) => { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 2.6, 6), wood); s.position.set(x, y0 - 0.9, z); g.add(s); });
+        }
         const boat = new THREE.Group(); boat.position.set(0, W.WATER + 0.05, 11);
         const hull = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.7, 5.2), mat(0x2f4a52, { roughness: 0.7 })); hull.position.y = 0.2; boat.add(hull);
         const bow = new THREE.Mesh(new THREE.ConeGeometry(1.05, 1.6, 4, 1), mat(0x2f4a52, { roughness: 0.7 })); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(1, 1, 0.45); bow.position.set(0, 0.2, 3.4); boat.add(bow);

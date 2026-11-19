@@ -72,6 +72,7 @@
     document.body.prepend(renderer.domElement);
     camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.05, 6000);
     addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+    setLoad(0.1, '小物のモデルを読み込み中'); await DG.PROPS.load();
     setLoad(0.15, '白亜紀の森を生成中'); await frame();
     world = W.create(renderer);
     // optional extra species kept only on this computer: open once with ?model=<name> (remembered), ?model=default to turn it off.
@@ -105,7 +106,7 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, SPEC, TREX, CO, keys, TI, coTest: ids => coTest(ids), get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
+    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, SPEC, TREX, CO, keys, TI, coTest: ids => coTest(ids), coProp: (kind, i) => coProp(kind, i || 0), get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -1056,13 +1057,16 @@
     msg('最初に救難信号へたどり着いた人の勝ち', 4);
   }
 
-  // ---- the other runners: the Adventurer figure (CC0, Quaternius) with their colour on the clothes and their
-  // name above; idle / walk / run picked from how fast they move. A caught co-op player is a glowing see-through
-  // ghost of the same figure. Until the model has loaded (or with no server) a simple capsule figure stands in.
-  const HUMAN = { gltf: null, tried: false, H: 1.72 };
+  // ---- the other runners: a survivor made with MPFB (MakeHuman, CC0 assets) and animated in Blender, the jacket
+  // tinted a little toward their colour, their name above; idle / walk / run / crouch picked from how they move.
+  // A caught co-op player is a glowing see-through ghost of the same figure, drifting (Float). Until the model has
+  // loaded (or with no server) a simple capsule figure stands in.
+  const HUMAN = { gltf: null, tried: false, H: 1.78 };
+  // clips and the ground speed (m/s) each one is animated for
+  const HCLIPS = { Idle: 0, Walk: 1.2, Run: 3.6, CrouchIdle: 0, CrouchWalk: 0.6, Float: 0 };
   function loadHuman() {
     if (HUMAN.tried || !DG.loadGLB) return; HUMAN.tried = true;
-    DG.loadGLB('models/human/adventurer.glb').then(g => {
+    DG.loadGLB('models/human/survivor.glb').then(g => {
       if (!g) return;
       g.scene.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(g.scene, true);
@@ -1081,24 +1085,27 @@
       if (!o.isMesh) return;
       o.castShadow = true; o.frustumCulled = false; o.userData.shared = true; // the geometry belongs to the loaded model
       o.material = (Array.isArray(o.material) ? o.material : [o.material]).map(m0 => {
-        const m = m0.clone(); m.metalness = 0; m.roughness = 0.8;
-        if (/green/i.test(m0.name)) m.color.copy(col).multiplyScalar(/light/i.test(m0.name) ? 0.55 : 0.32); // the shirt and trousers in the player's colour
-        else m.color.multiplyScalar(1.6); // the asset is very dark; lift it so it reads at night
-        m.userData.base = { color: m.color.clone() }; mats.push(m); return m;
+        const m = m0.clone(); m.metalness = 0;
+        // hair, brows and lashes: cut out by their alpha (no sorting troubles); everything else solid
+        if (/short|hair|eyebrow|eyelash/i.test(m0.name)) { m.transparent = false; m.alphaTest = 0.45; m.depthWrite = true; m.side = THREE.DoubleSide; }
+        else { m.transparent = false; m.depthWrite = true; }
+        if (/suit/i.test(m0.name)) m.color.lerp(col, 0.3); // a hint of the player's colour on the clothes
+        m.userData.base = { color: m.color.clone(), alphaTest: m.alphaTest }; mats.push(m); return m;
       });
       if (o.material.length === 1) o.material = o.material[0];
     });
     g.add(inner);
-    const mix = new THREE.AnimationMixer(sc), act = {};
-    ['Idle', 'Walk', 'Run', 'Idle_Neutral'].forEach(n => { const c = HUMAN.clip(n); if (c) { act[n] = mix.clipAction(c); act[n].play(); act[n].setEffectiveWeight(0); } });
-    Object.assign(g.userData, { mix, act, mats, col, w: { Idle: 1, Walk: 0, Run: 0, Idle_Neutral: 0 }, ghost: null, last: g.position.clone(), spd: 0 });
+    const mix = new THREE.AnimationMixer(sc), act = {}, w = {};
+    for (const n in HCLIPS) { const c = HUMAN.clip(n); if (c) { act[n] = mix.clipAction(c); act[n].play(); act[n].setEffectiveWeight(0); w[n] = 0; act[n].time = Math.random() * c.duration; } }
+    w.Idle = 1;
+    Object.assign(g.userData, { mix, act, mats, col, w, ghost: null, last: g.position.clone(), spd: 0 });
     if (act.Idle) act.Idle.setEffectiveWeight(1);
   }
   // see-through glow for a ghost (b = true), or back to the solid figure
   function humanGhost(g, b) {
     const u = g.userData; if (!u.mats || u.ghost === b) return; u.ghost = b;
     u.mats.forEach(m => {
-      m.transparent = b; m.opacity = b ? 0.38 : 1; m.depthWrite = !b; m.blending = b ? THREE.AdditiveBlending : THREE.NormalBlending;
+      m.transparent = b; m.opacity = b ? 0.38 : 1; m.depthWrite = !b; m.blending = b ? THREE.AdditiveBlending : THREE.NormalBlending; m.alphaTest = b ? 0 : m.userData.base.alphaTest;
       if (b) { m.color.copy(u.col).lerp(new THREE.Color(0xbfe4ff), 0.4).multiplyScalar(0.45); m.emissive.copy(u.col).lerp(new THREE.Color(0xbfe4ff), 0.35).multiplyScalar(0.5); }
       else { m.color.copy(m.userData.base.color); m.emissive.setRGB(0, 0, 0); }
       m.needsUpdate = true;
@@ -1138,16 +1145,18 @@
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
       const ghost = p.st === 'ghost', u = g.userData;
       g.position.y = ghost ? lerp(g.position.y, p.tp.pos.y - 1.65, k) + (u.mix ? Math.sin(performance.now() / 600 + u.slot) * 0.12 : 0) : Math.max(W.height(g.position.x, g.position.z), lerp(g.position.y, p.tp.pos.y - 1.65, k));
-      g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr && !ghost ? (u.mix ? 0.78 : 0.62) : 1, k);
+      g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr && !ghost && !u.mix ? 0.62 : 1, k); // (the figure crouches by itself)
       if (!u.mix || !g.visible) return;
       // how fast they move over the ground (positions come ten times a second, so smooth it)
       const sp = Math.hypot(g.position.x - u.last.x, g.position.z - u.last.z) / Math.max(dt, 1e-3); u.last.copy(g.position);
       u.spd = lerp(u.spd, Math.min(sp, 12), 1 - Math.exp(-dt * 6));
       humanGhost(g, ghost);
-      const want = ghost ? 'Idle_Neutral' : u.spd > 4.2 ? 'Run' : u.spd > 0.6 ? 'Walk' : 'Idle', kw = 1 - Math.exp(-dt * 8);
+      const s = u.spd, want = ghost ? 'Float' : p.cr ? (s > 0.4 ? 'CrouchWalk' : 'CrouchIdle') : s > 2.6 ? 'Run' : s > 0.5 ? 'Walk' : 'Idle', kw = 1 - Math.exp(-dt * 8);
       for (const n in u.act) { u.w[n] = lerp(u.w[n], n === want ? 1 : 0, kw); u.act[n].setEffectiveWeight(u.w[n]); }
-      if (u.act.Walk) u.act.Walk.timeScale = clamp(u.spd / 1.9, 0.6, 1.6);
-      if (u.act.Run) u.act.Run.timeScale = clamp(u.spd / 6.5, 0.7, 1.5);
+      // play the stride at the speed they move (within reason)
+      if (u.act.Walk) u.act.Walk.timeScale = clamp(s / HCLIPS.Walk, 0.6, 2.0);
+      if (u.act.Run) u.act.Run.timeScale = clamp(s / HCLIPS.Run, 0.8, 2.1);
+      if (u.act.CrouchWalk) u.act.CrouchWalk.timeScale = clamp(s / HCLIPS.CrouchWalk, 0.6, 2.6);
       u.mix.update(dt);
     });
   }
@@ -1651,28 +1660,67 @@
   const glowS = (color, s, op) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: DG.T.soft(), color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: op == null ? 0.8 : op, fog: false })); sp.scale.setScalar(s); return sp; };
   const gy = p => Math.max(W.height(p.x, p.z), W.WATER);
   // simple props for the mission targets (no lights: glows are sprites)
+  // the injured survivor: the Adventurer figure posed at the end of its fall, lying along the stretcher
+  function hurtFigure() {
+    if (!HUMAN.gltf) return null;
+    const sc = THREE_SkeletonUtils.clone(HUMAN.gltf.scene), g = new THREE.Group(), inner = new THREE.Group();
+    inner.add(sc); inner.scale.setScalar(HUMAN.k); g.add(inner);
+    sc.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; o.userData.shared = true; } });
+    const c = HUMAN.clip('Lie') || HUMAN.clip('Death');
+    if (c) { const mx = new THREE.AnimationMixer(sc); mx.clipAction(c).play(); mx.setTime(c.name === 'Lie' ? 0 : c.duration - 0.01); }
+    // centre the lying body on the stretcher, along it
+    g.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(inner, true), s = b.getSize(new V()), ctr = b.getCenter(new V());
+    if (s.x > s.z) inner.rotation.y = Math.PI / 2;
+    g.updateMatrixWorld(true); b.setFromObject(inner, true); b.getCenter(ctr);
+    inner.position.set(-ctr.x, -b.min.y, -ctr.z);
+    return g;
+  }
   function coProp(kind, k) {
     const g = new THREE.Group(), m = (c, o) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.8 }, o || {}));
     const box = (w, h, d, c, x, y, z, o) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m(c, o)); b.position.set(x || 0, y || 0, z || 0); g.add(b); return b; };
     const cyl = (r, h, c, x, y, z, o) => { const b = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 8), m(c, o)); b.position.set(x || 0, y || 0, z || 0); g.add(b); return b; };
     const u = g.userData;
+    // a CC0 model (js/props.js) if it has loaded, else null and the simple shape below is used
+    const md = (n, size, x, y, z, opt) => { const o = DG.PROPS.get(n, size, opt); if (o) { o.position.set(x || 0, y || 0, z || 0); g.add(o); } return o; };
     if (kind === 'antenna') { cyl(0.06, 5, 0x55595a, 0, 2.5, 0, { metalness: 0.6 }); box(0.9, 0.06, 0.06, 0x55595a, 0, 4.6); box(0.4, 0.5, 0.25, 0x3e4a3a, 0, 1.0, 0.15); u.on = glowS(0x60ff90, 1.2, 0); u.on.position.y = 5.1; g.add(u.on); u.dim = glowS(0xff4030, 0.8); u.dim.position.y = 5.1; g.add(u.dim); }
     else if (kind === 'cam') { cyl(0.08, 1.6, 0x4a3a26, 0, 0.8); box(0.22, 0.3, 0.18, 0x3a4a2a, 0, 1.45, 0.12); u.dim = glowS(0xff3020, 0.5); u.dim.position.set(0, 1.55, 0.25); g.add(u.dim); }
-    else if (kind === 'page') { const p = box(0.3, 0.01, 0.4, 0xf0ead8); p.position.y = 0.05; p.rotation.y = k; u.dim = glowS(0xfff6d0, 1.3, 0.55); u.dim.position.y = 0.3; g.add(u.dim); u.hide = true; }
-    else if (kind === 'brazier') { cyl(0.5, 0.35, 0x3a3634, 0, 0.95, 0, { metalness: 0.5 }); [0, 2.1, 4.2].forEach(a => { const l = cyl(0.04, 1, 0x3a3634, Math.sin(a) * 0.35, 0.4, Math.cos(a) * 0.35); l.rotation.z = 0.2; }); u.on = glowS(0xff8a30, 3, 0); u.on.position.y = 1.5; g.add(u.on); }
-    else if (kind === 'buoy') { cyl(0.35, 0.5, 0xd8602a, 0, 0.25); cyl(0.04, 1.4, 0x888888, 0, 0.9); u.dim = glowS(0xffb060, 1, 0.6); u.dim.position.y = 1.6; g.add(u.dim); }
+    else if (kind === 'page') { const p = md('book', 0.45) || box(0.3, 0.01, 0.4, 0xf0ead8); if (!p.isGroup) p.position.y = 0.05; p.rotation.y = k; u.dim = glowS(0xfff6d0, 1.3, 0.55); u.dim.position.y = 0.3; g.add(u.dim); u.hide = true; }
+    else if (kind === 'brazier') {
+      const bf = md('bonfire', 1.3, 0, -0.08); // a ring of stones with a few charred logs inside
+      if (bf) for (let i = 0; i < 3; i++) { const l = cyl(0.06, 0.8, 0x2b2118, Math.sin(i * 2.1) * 0.15, 0.12, Math.cos(i * 2.1) * 0.15); l.rotation.set(Math.PI / 2 - 0.3, i * 2.1, 0); }
+      else { cyl(0.5, 0.35, 0x3a3634, 0, 0.95, 0, { metalness: 0.5 }); [0, 2.1, 4.2].forEach(a => { const l = cyl(0.04, 1, 0x3a3634, Math.sin(a) * 0.35, 0.4, Math.cos(a) * 0.35); l.rotation.z = 0.2; }); }
+      u.on = glowS(0xff8a30, 3, 0); u.on.position.y = bf ? 0.5 : 1.5; g.add(u.on);
+    }
+    else if (kind === 'buoy') { // floats on the water (the model's waterline is 30 % up)
+      if (!md('buoy', 1.6, 0, -0.49, 0, { fit: 'h' })) { cyl(0.35, 0.5, 0xd8602a, 0, 0.25); cyl(0.04, 1.4, 0x888888, 0, 0.9); }
+      u.dim = glowS(0xffb060, 1, 0.6); u.dim.position.y = 1.4; g.add(u.dim);
+    }
     else if (kind === 'board') { cyl(0.07, 2, 0x4a3a26, -0.7, 1); cyl(0.07, 2, 0x4a3a26, 0.7, 1); box(1.7, 1, 0.08, 0x6a5a3a, 0, 1.5); box(0.5, 0.35, 0.02, 0xe8e0c8, 0.2, 1.55, 0.06); }
     else if (kind === 'safe') { box(0.9, 1.1, 0.8, 0x2e3436, 0, 0.55, 0, { metalness: 0.6, roughness: 0.4 }); cyl(0.12, 0.05, 0x999999, 0.15, 0.6, 0.42).rotation.x = Math.PI / 2; u.on = glowS(0x60ff90, 0.8, 0); u.on.position.set(0, 1.25, 0); g.add(u.on); }
-    else if (kind === 'radio') { box(0.25, 0.4, 0.12, 0x2a2a2a, 0, 0.12).rotation.z = 1.4; u.hide = true; }
-    else if (kind === 'fuel') { box(0.35, 0.5, 0.22, 0xb82a1a, 0, 0.25, 0, { metalness: 0.4 }); cyl(0.04, 0.1, 0x222222, 0.1, 0.55, 0); u.hide = true; u.dim = glowS(0xff6040, 1, 0.45); u.dim.position.y = 0.7; g.add(u.dim); }
-    else if (kind === 'egg') { if (k === 0) { const nest = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.35, 6, 14), m(0x4a3a22)); nest.rotation.x = Math.PI / 2; nest.position.y = 0.15; g.add(nest); } const e = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), m(0xd8d0b0)); e.scale.y = 1.35; e.position.y = 0.3; g.add(e); u.egg = e; }
+    else if (kind === 'radio') { if (!md('radio', 0.5)) box(0.25, 0.4, 0.12, 0x2a2a2a, 0, 0.12).rotation.z = 1.4; u.hide = true; }
+    else if (kind === 'fuel') { if (!md('gascan', 0.5, 0, 0, 0, { fit: 'h' })) { box(0.35, 0.5, 0.22, 0xb82a1a, 0, 0.25, 0, { metalness: 0.4 }); cyl(0.04, 0.1, 0x222222, 0.1, 0.55, 0); } u.hide = true; u.dim = glowS(0xff6040, 1, 0.45); u.dim.position.y = 0.7; g.add(u.dim); }
+    else if (kind === 'egg') { if (k === 0) { const nest = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.35, 6, 14), m(0x4a3a22)); nest.rotation.x = Math.PI / 2; nest.position.y = 0.15; g.add(nest); } const e = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), m(0xd8d0b0, { roughness: 0.6 })); e.scale.y = 1.35; e.position.y = 0.3; g.add(e); u.egg = e; }
     else if (kind === 'drone') { box(1.2, 0.18, 1.2, 0x2a2e33, 0, 0.12, 0, { metalness: 0.5 }); [[0.6, 0.6], [-0.6, 0.6], [0.6, -0.6], [-0.6, -0.6]].forEach(([x, z]) => cyl(0.25, 0.03, 0x555555, x, 0.25, z)); u.hide = true; u.blink = glowS(0xff2010, 2.4); u.blink.position.y = 0.5; g.add(u.blink); }
-    else if (kind === 'pole') { cyl(0.12, 6, 0x4a3a26, 0, 3); box(1.4, 0.1, 0.1, 0x4a3a26, 0, 5.6); const w = cyl(0.02, 3, 0x111111, 0.6, 3.8, 0); w.rotation.z = 0.5; u.dim = glowS(0x9fd8ff, 1.2, 0.8); u.dim.position.set(1, 2.6, 0); g.add(u.dim); u.spark = true; }
-    else if (kind === 'hurt') { box(0.6, 0.1, 1.9, 0x5a6a4a, 0, 0.12); const b = cyl(0.2, 1.2, 0x3a4a5a, 0, 0.35, 0.1); b.rotation.x = Math.PI / 2; const h = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), m(0xd9b48f)); h.position.set(0, 0.35, -0.75); g.add(h); u.hide = true; }
-    else if (kind === 'valve') { cyl(0.12, 1.1, 0x5a5e5a, 0, 0.55, 0, { metalness: 0.6 }); const w = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 6, 16), m(0xb02a1a, { metalness: 0.4 })); w.position.y = 1.15; w.rotation.x = Math.PI / 2; g.add(w); u.wheel = w; }
+    else if (kind === 'pole') { cyl(0.12, 6, 0x4a3a26, 0, 3); box(1.4, 0.1, 0.1, 0x4a3a26, 0, 5.6); const w = cyl(0.02, 3, 0x111111, 0.6, 3.8, 0); w.rotation.z = 0.5; md('powerbox', 0.55, 0, 1.3, 0.14, { fit: 'h' }); /* junction box on the pole */ u.dim = glowS(0x9fd8ff, 1.2, 0.8); u.dim.position.set(1, 2.6, 0); g.add(u.dim); u.spark = true; }
+    else if (kind === 'hurt') {
+      box(0.6, 0.1, 1.9, 0x5a6a4a, 0, 0.12);
+      const who = hurtFigure();
+      if (who) { who.position.y = 0.17; g.add(who); }
+      else { const b = cyl(0.2, 1.2, 0x3a4a5a, 0, 0.35, 0.1); b.rotation.x = Math.PI / 2; const h = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), m(0xd9b48f)); h.position.set(0, 0.35, -0.75); g.add(h); }
+      u.hide = true;
+    }
+    else if (kind === 'valve') { md('pipes', 2.2, 0, 0, 0.45); cyl(0.12, 1.1, 0x5a5e5a, 0, 0.55, 0, { metalness: 0.6 }); const w = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 6, 16), m(0xb02a1a, { metalness: 0.4 })); w.position.y = 1.15; w.rotation.x = Math.PI / 2; g.add(w); u.wheel = w; }
     else if (kind === 'cage') { [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]].forEach(([x, z]) => cyl(0.08, 3, 0x55504a, x, 1.5, z, { metalness: 0.6 })); box(2.6, 0.1, 2.6, 0x55504a, 0, 3, 0, { metalness: 0.6 }); u.gate = box(2.4, 0.1, 0.1, 0x55504a, 0, 2.7, -1.2, { metalness: 0.6 }); u.meat = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), m(0x7a1e16)); u.meat.position.y = 0.3; u.meat.visible = false; g.add(u.meat); }
     else if (kind === 'lookout') { [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].forEach(([x, z]) => cyl(0.12, 4, 0x4a3a26, x, 2, z)); box(3.4, 0.15, 3.4, 0x5a4a30, 0, 4); box(3.4, 0.9, 0.08, 0x5a4a30, 0, 4.5, 1.65); u.ring = new THREE.Mesh(new THREE.RingGeometry(9.6, 10, 48), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false })); u.ring.rotation.x = -Math.PI / 2; u.ring.position.y = 0.15; g.add(u.ring); }
-    else if (kind === 'door') { box(4, 3, 0.3, 0x4a4a46, 0, 1.5); u.part = box(1.6, 2.4, 0.12, 0x6a3a22, 0, 1.2, -0.2, { metalness: 0.5 }); box(0.2, 0.2, 0.25, 0x999999, 0.6, 1.2, -0.3); }
+    else if (kind === 'door') {
+      box(4, 3, 0.3, 0x4a4a46, 0, 1.5);
+      // a roller shutter on each face, widened to 1.6 m; they roll up as the door is forced
+      if (DG.PROPS.has('door')) {
+        u.part = new THREE.Group(); u.part.position.set(0, 2.4, 0); g.add(u.part); u.roll = true;
+        [-0.3, 0.3].forEach(z => { const sh = DG.PROPS.get('door', 2.4, { fit: 'h' }); sh.scale.x = 1.5; sh.position.set(0, -2.4, z); if (z > 0) sh.rotation.y = Math.PI; u.part.add(sh); });
+      }
+      if (!u.part) { u.part = box(1.6, 2.4, 0.12, 0x6a3a22, 0, 1.2, -0.2, { metalness: 0.5 }); box(0.2, 0.2, 0.25, 0x999999, 0.6, 1.2, -0.3); } }
     else if (kind === 'gen' || kind === 'box' || kind === 'dst') { /* the tower's own generator / fuse box, or the camp */ }
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return g;
@@ -1689,7 +1737,7 @@
       o.position.set(t.p.x, M.d.where === 'water' ? W.WATER : gy(t.p), t.p.z); o.rotation.y = (i * 1.7 + M.stage) % 6.283;
       CO.marks.props.add(o); t.obj = o;
       if (M.d.nest && i > 0) return; // one label for the whole nest
-      t.lab = labelSprite(M.d.icon + ' ' + M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 6 : kind === 'pole' ? 6.6 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
+      t.lab = labelSprite(M.d.icon + ' ' + M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
     }));
     world.scene.add(g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props);
   }
@@ -1700,7 +1748,7 @@
     const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x8fa3b8, transparent: true, opacity: 0.3, depthWrite: false }));
     m.frustumCulled = false; world.scene.add(m); CO.rain = { m, pos, N };
   }
-  const disposeTree = o => o.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
+  const disposeTree = o => o.traverse(c => { if (c.userData.shared) return; if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
   // take every co-op object out of the scene and stop its sounds (leaving the room, back to the lobby, a new game)
   function coCleanup() {
     if (CO.lights) { CO.lights.forEach(l => { world.scene.remove(l, l.target); l.dispose(); }); CO.lights = null; }
@@ -2260,7 +2308,7 @@
           if (u.wheel) u.wheel.rotation.z = M.s[ti] * 12;
           if (u.meat) u.meat.visible = M.s[ti] >= 1;
           if (u.gate) u.gate.position.y = M.v ? 0.9 : 2.7;
-          if (M.d.kind === 'door' && u.part) u.part.position.x = M.s[ti] * 1.5;
+          if (M.d.kind === 'door' && u.part) { if (u.roll) u.part.scale.y = 1 - Math.min(M.s[ti], 1) * 0.9; else u.part.position.x = M.s[ti] * 1.5; }
           if (u.ring) u.ring.material.opacity = act ? 0.2 + 0.15 * Math.sin(T * 3) : 0;
         }
         if (t.lab) { const hid = M.d.mark === false; t.lab.visible = !done && (ghost ? M.stage >= CO.stage || CO.phase !== 'm' : act && !hid && camera.position.distanceTo(t.lab.position) < 28) && CO.phase === 'm'; }

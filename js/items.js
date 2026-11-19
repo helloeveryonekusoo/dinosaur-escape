@@ -33,7 +33,11 @@
   DG.itemTotal = mult => ORDER.reduce((s, k) => s + countOf(k, mult), 0);
   const THROWN = { flare: 19, meat: 14, cracker: 17, flash: 18, dyn: 15 };
 
+  // items drawn with a CC0 model (js/props.js) when it has loaded: [model, size in metres]
+  const MODEL = { dart: ['rifle', 0.9], medkit: ['firstaid', 0.45], flash: ['grenade', 0.3] };
   function mkMesh(type) {
+    const md = MODEL[type], o = md && DG.PROPS && DG.PROPS.get(md[0], md[1]);
+    if (o) return o;
     const g = new THREE.Group();
     const std = (c, r, e) => new THREE.MeshStandardMaterial({ color: c, roughness: r, emissive: e || 0x000000 });
     if (type === 'flare') {

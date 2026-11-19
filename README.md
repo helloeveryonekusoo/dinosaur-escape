@@ -89,7 +89,7 @@
 ### スマホ・タブレット
 
 横向きで遊びます。画面の左側をドラッグで移動、右側をドラッグで視点、右下のボタンで「走る・跳ぶ・しゃがむ・アイテムを使う」、アイテム欄をタップで選択です。
-スマホでは木や草の数、影、モデルの解像度を減らして軽くしています。最初の読み込みで約30MBを通信するので、Wi-Fi での利用をおすすめします。
+スマホでは木や草の数、影、モデルの解像度を減らして軽くしています。最初の読み込みで約40MBを通信するので、Wi-Fi での利用をおすすめします。
 
 ## 自分のパソコンで動かす
 
@@ -101,7 +101,8 @@
 ## クレジット
 
 - ティラノサウルスの3Dモデル: [“Animated Tyrannosaurus Rex Dinosaur Running Loop”](https://sketchfab.com/3d-models/38007d947ae74dea83988cb0b08ee053) by LasquetiSpice — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-- オンラインで見える仲間・幽霊の人物モデル: [“Adventurer”](https://poly.pizza/m/5EGWBMpuXq) by Quaternius — [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（服の色はプレイヤーの色に塗り替えています）
+- オンラインで見える仲間・幽霊の人物モデル（`models/human/survivor.glb`）: [MPFB](https://static.makehumancommunity.org/mpfb.html)（MakeHuman）で作成。体・肌・目・髪・服は MakeHuman の [CC0](https://static.makehumancommunity.org/about/license.html) アセット。動き（待機・歩く・走る・しゃがむ・漂う・倒れる・横たわる）は Blender で付けたものです
+- 協力モードの小物（無線機・研究ノート・軍用の木箱・燃料缶・石のたき火台・シャッター扉・配管・桟橋・ドラム缶・ライフル・救急箱・手榴弾・発電機・配電盤・ブイ）の3Dモデル: [Poly Haven](https://polyhaven.com/models) — [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（テクスチャを縮小し、一部を組み合わせて `models/props/` に収録）
 - 描画: [three.js](https://threejs.org/)（MIT License）
 - 3人対戦の通信: [PeerJS](https://peerjs.com/)（MIT License）
 - 地形・木・岩・テクスチャ・効果音は、すべてプログラムで生成しています。
