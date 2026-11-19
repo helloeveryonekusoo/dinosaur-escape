@@ -101,6 +101,7 @@
 ## クレジット
 
 - ティラノサウルスの3Dモデル: [“Animated Tyrannosaurus Rex Dinosaur Running Loop”](https://sketchfab.com/3d-models/38007d947ae74dea83988cb0b08ee053) by LasquetiSpice — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- オンラインで見える仲間・幽霊の人物モデル: [“Adventurer”](https://poly.pizza/m/5EGWBMpuXq) by Quaternius — [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（服の色はプレイヤーの色に塗り替えています）
 - 描画: [three.js](https://threejs.org/)（MIT License）
 - 3人対戦の通信: [PeerJS](https://peerjs.com/)（MIT License）
-- 地形・木・岩・テクスチャ・効果音はすべてプログラムで生成しています。
+- 地形・木・岩・テクスチャ・効果音は、すべてプログラムで生成しています。

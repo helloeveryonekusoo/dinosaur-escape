@@ -1056,23 +1056,77 @@
     msg('最初に救難信号へたどり着いた人の勝ち', 4);
   }
 
-  // ---- the other runners, as simple coloured figures with their name above ----
+  // ---- the other runners: the Adventurer figure (CC0, Quaternius) with their colour on the clothes and their
+  // name above; idle / walk / run picked from how fast they move. A caught co-op player is a glowing see-through
+  // ghost of the same figure. Until the model has loaded (or with no server) a simple capsule figure stands in.
+  const HUMAN = { gltf: null, tried: false, H: 1.72 };
+  function loadHuman() {
+    if (HUMAN.tried || !DG.loadGLB) return; HUMAN.tried = true;
+    DG.loadGLB('models/human/adventurer.glb').then(g => {
+      if (!g) return;
+      g.scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(g.scene, true);
+      HUMAN.k = HUMAN.H / Math.max(0.01, box.max.y - box.min.y); HUMAN.y0 = -box.min.y * HUMAN.k;
+      HUMAN.clip = n => g.animations.find(a => a.name.split('|').pop() === n);
+      HUMAN.gltf = g;
+      if (VS.avatars.length) ensureAvatars(); // swap the stand-ins for the model
+    });
+  }
+  loadHuman();
+  function humanFigure(p, g) {
+    const sc = THREE_SkeletonUtils.clone(HUMAN.gltf.scene), inner = new THREE.Group();
+    inner.add(sc); inner.scale.setScalar(HUMAN.k); inner.position.y = HUMAN.y0; inner.rotation.y = Math.PI; // the model faces +Z, a runner looks down -Z
+    const col = new THREE.Color(p.color), mats = [];
+    sc.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.frustumCulled = false; o.userData.shared = true; // the geometry belongs to the loaded model
+      o.material = (Array.isArray(o.material) ? o.material : [o.material]).map(m0 => {
+        const m = m0.clone(); m.metalness = 0; m.roughness = 0.8;
+        if (/green/i.test(m0.name)) m.color.copy(col).multiplyScalar(/light/i.test(m0.name) ? 0.55 : 0.32); // the shirt and trousers in the player's colour
+        else m.color.multiplyScalar(1.6); // the asset is very dark; lift it so it reads at night
+        m.userData.base = { color: m.color.clone() }; mats.push(m); return m;
+      });
+      if (o.material.length === 1) o.material = o.material[0];
+    });
+    g.add(inner);
+    const mix = new THREE.AnimationMixer(sc), act = {};
+    ['Idle', 'Walk', 'Run', 'Idle_Neutral'].forEach(n => { const c = HUMAN.clip(n); if (c) { act[n] = mix.clipAction(c); act[n].play(); act[n].setEffectiveWeight(0); } });
+    Object.assign(g.userData, { mix, act, mats, col, w: { Idle: 1, Walk: 0, Run: 0, Idle_Neutral: 0 }, ghost: null, last: g.position.clone(), spd: 0 });
+    if (act.Idle) act.Idle.setEffectiveWeight(1);
+  }
+  // see-through glow for a ghost (b = true), or back to the solid figure
+  function humanGhost(g, b) {
+    const u = g.userData; if (!u.mats || u.ghost === b) return; u.ghost = b;
+    u.mats.forEach(m => {
+      m.transparent = b; m.opacity = b ? 0.38 : 1; m.depthWrite = !b; m.blending = b ? THREE.AdditiveBlending : THREE.NormalBlending;
+      if (b) { m.color.copy(u.col).lerp(new THREE.Color(0xbfe4ff), 0.4).multiplyScalar(0.45); m.emissive.copy(u.col).lerp(new THREE.Color(0xbfe4ff), 0.35).multiplyScalar(0.5); }
+      else { m.color.copy(m.userData.base.color); m.emissive.setRGB(0, 0, 0); }
+      m.needsUpdate = true;
+    });
+    g.traverse(o => { if (o.isMesh) o.castShadow = !b; });
+  }
   function ensureAvatars() {
-    VS.avatars.forEach(g => { world.scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); });
+    VS.avatars.forEach(g => {
+      world.scene.remove(g); if (g.userData.mix) g.userData.mix.stopAllAction();
+      g.traverse(o => { if (o.geometry && !o.userData.shared) o.geometry.dispose(); (Array.isArray(o.material) ? o.material : o.material ? [o.material] : []).forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); });
+    });
     VS.avatars = [];
     VS.players.forEach(p => {
       if (!p || p.slot === VS.mySlot) return;
       const g = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.75 });
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.85, 4, 10), mat); body.position.y = 0.72; g.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd9b48f, roughness: 0.8 })); head.position.y = 1.47; g.add(head);
-      const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.18), new THREE.MeshStandardMaterial({ color: 0x3b3a2c, roughness: 0.9 })); pack.position.set(0, 0.95, 0.24); g.add(pack);
+      if (HUMAN.gltf) humanFigure(p, g);
+      else {
+        const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.75 });
+        const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.85, 4, 10), mat); body.position.y = 0.72; g.add(body);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd9b48f, roughness: 0.8 })); head.position.y = 1.47; g.add(head);
+        const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.18), new THREE.MeshStandardMaterial({ color: 0x3b3a2c, roughness: 0.9 })); pack.position.set(0, 0.95, 0.24); g.add(pack);
+      }
       const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const c = cv.getContext('2d');
       c.fillStyle = 'rgba(0,0,0,0.5)'; c.fillRect(0, 10, 256, 44); c.font = 'bold 32px sans-serif'; c.textAlign = 'center'; c.fillStyle = p.color; c.fillText(p.name, 128, 44);
       const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
       const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })); tag.scale.set(1.8, 0.45, 1); tag.position.y = 2.15; g.add(tag);
       g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-      g.userData.slot = p.slot; g.position.copy(p.tp.pos).y -= 1.65;
+      g.userData.slot = p.slot; g.position.copy(p.tp.pos).y -= 1.65; if (g.userData.last) g.userData.last.copy(g.position);
       world.scene.add(g); VS.avatars.push(g);
     });
   }
@@ -1082,8 +1136,19 @@
       const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
       g.visible = (p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive()); // not in our own way when looking through their eyes
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
-      g.position.y = p.st === 'ghost' ? lerp(g.position.y, p.tp.pos.y - 1.65, k) : W.height(g.position.x, g.position.z);
-      g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr ? 0.62 : 1, k);
+      const ghost = p.st === 'ghost', u = g.userData;
+      g.position.y = ghost ? lerp(g.position.y, p.tp.pos.y - 1.65, k) + (u.mix ? Math.sin(performance.now() / 600 + u.slot) * 0.12 : 0) : Math.max(W.height(g.position.x, g.position.z), lerp(g.position.y, p.tp.pos.y - 1.65, k));
+      g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr && !ghost ? (u.mix ? 0.78 : 0.62) : 1, k);
+      if (!u.mix || !g.visible) return;
+      // how fast they move over the ground (positions come ten times a second, so smooth it)
+      const sp = Math.hypot(g.position.x - u.last.x, g.position.z - u.last.z) / Math.max(dt, 1e-3); u.last.copy(g.position);
+      u.spd = lerp(u.spd, Math.min(sp, 12), 1 - Math.exp(-dt * 6));
+      humanGhost(g, ghost);
+      const want = ghost ? 'Idle_Neutral' : u.spd > 4.2 ? 'Run' : u.spd > 0.6 ? 'Walk' : 'Idle', kw = 1 - Math.exp(-dt * 8);
+      for (const n in u.act) { u.w[n] = lerp(u.w[n], n === want ? 1 : 0, kw); u.act[n].setEffectiveWeight(u.w[n]); }
+      if (u.act.Walk) u.act.Walk.timeScale = clamp(u.spd / 1.9, 0.6, 1.6);
+      if (u.act.Run) u.act.Run.timeScale = clamp(u.spd / 6.5, 0.7, 1.5);
+      u.mix.update(dt);
     });
   }
 
@@ -1570,7 +1635,7 @@
   function coLightsMake() {
     if (CO.lights) return;
     CO.lights = [0, 1, 2, 3].map(i => {
-      const l = new THREE.SpotLight(0xfff0d8, 0, 50, 0.46, 0.55, 1.35);
+      const l = new THREE.SpotLight(0xfff0d8, 0, 60, 0.5, 0.55, 1.2);
       if (i === VS.mySlot && !DG.MOBILE) { l.castShadow = true; l.shadow.mapSize.set(1024, 1024); l.shadow.bias = -0.0008; l.shadow.camera.near = 0.3; }
       world.scene.add(l, l.target); return l;
     });
@@ -2162,7 +2227,7 @@
       l.target.position.copy(l.position).addScaledVector(coV, 10); l.target.updateMatrixWorld();
       let k = 1;
       if (mine && near < 38 && Math.random() < (1 - near / 38) * 0.3) k = Math.random() * 0.25; // it's close: the light falters
-      l.intensity = 75 * k;
+      l.intensity = 110 * k;
     });
     // rain falls round whoever is looking (heavier in a storm, none in the calm)
     if (CO.rain) {
@@ -2239,7 +2304,7 @@
     CO.growlT -= dt;
     if (na && near < 30 && !ghost && me && me.st === 'alive' && CO.growlT < 0) { CO.growlT = 3 + Math.random() * 4; A.growl(na.d.headPos(), 0.5 + 0.5 * (1 - near / 30)); }
     // the ghost's view: see much further through the fog (fog thickens in a fog event)
-    if (world.scene.fog) world.scene.fog.density = ghost ? 0.012 : ev === 'fog' ? 0.075 : 0.034;
+    if (world.scene.fog) world.scene.fog.density = ghost ? 0.012 : ev === 'fog' ? 0.07 : W.NIGHT_FOG;
     coHud(dt, ghost);
   }
   function coTrapMesh(sprung) {
