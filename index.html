@@ -54,6 +54,7 @@
   #compass .mk{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:#ddd;text-shadow:0 1px 3px #000}
   #compass .gl{color:#ff5a3c;font-size:16px}
   #compass .dn{color:#ffb070;font-size:12px;white-space:nowrap}
+  body.coop #compass{height:28px} #compass .pic{top:2px;line-height:0;filter:drop-shadow(0 1px 2px #000)}
   #inv{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);display:flex;gap:6px;align-items:flex-end}
   #inv .slot{position:relative;width:46px;height:46px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);border-radius:4px;
              display:flex;align-items:center;justify-content:center;font-size:24px}
@@ -285,7 +286,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
-const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/game.js'];
+const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/pictos.js','js/game.js'];
 for (const f of files) {
   await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
 }
