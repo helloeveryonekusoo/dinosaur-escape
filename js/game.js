@@ -1028,6 +1028,7 @@
     world = W.create(renderer, { scene, layout: { veg: 1, fern: 1 } });
     dinos.forEach(a => { a.d.ground = W.height; });
     if (COOP()) coLightsMake(); // before compiling, so the flashlights don't recompile every shader mid-game
+    if (COOP() && DG.MINIMAP) { setLoad(0.8, '地図を描いています'); await frame(); DG.MINIMAP.build(W); } // (the minimap's picture of the swamp)
     setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
     renderer.compile(world.scene, camera);
     VS.raceMap = true; mapUsed = true;
@@ -1524,7 +1525,7 @@
     mk(0, 'N'); mk(Math.PI / 2, 'W'); mk(Math.PI, 'S'); mk(-Math.PI / 2, 'E');
     // with hints off, no marks for the signal or the other runners (they start evenly round the signal, so their
     // directions would give it away)
-    if (COOP()) coCompass(mk, vp);
+    if (COOP()) { const marks = coMarks(); coCompass(mk, vp, marks); coMinimap(dt, vp, vyaw, marks); }
     else if (VS.hints) {
       mk(Math.atan2(-(W.GOAL.x - vp.x), -(W.GOAL.z - vp.z)), '▼', 'gl');
       VS.players.forEach(p => { if (p && p.slot !== VS.mySlot && p !== st && p.st === 'alive') mk(Math.atan2(-(p.tp.pos.x - vp.x), -(p.tp.pos.z - vp.z)), '●', '', `color:${p.color}`); });
@@ -2662,13 +2663,11 @@
     $('tAct').style.display = $('tLight').style.display = ghost ? 'none' : ''; $('tPing').style.display = ghost ? '' : 'none';
     $('tLight').classList.toggle('on', CO.light);
   }
-  // the compass in co-op: this stage's mission targets (not the hidden ones), where to take what you carry, the way
-  // out, dropped things, pings and signal flares. A ghost sees everything (hidden things and fuse crates too).
-  function coCompass(mk0, vp) {
-    const ghost = coGhost(), ang = q => Math.atan2(-(q.x - vp.x), -(q.z - vp.z)), bag = coMine();
-    // every mark is a drawn pictogram (js/pictos.js); places to take things to and the way out wear a red ring
-    const sz = DG.MOBILE ? 20 : 24;
-    const mk = (a, name, cls) => mk0(a, DG.PICTO.svg(name, { size: sz, ring: cls === 'gl' ? '#ff6a48' : undefined }), 'pic');
+  // What the compass and the minimap show in co-op: this stage's mission targets (not the hidden ones), where to take
+  // what you carry, the way out, dropped things, pings and signal flares. A ghost sees everything (hidden things and
+  // fuse crates too). Each: { p, pic, gl } (gl: a place to take things to / the way out: a red ring) or { p, ping }.
+  function coMarks() {
+    const ghost = coGhost(), bag = coMine(), out = [], add = (p, pic, gl) => out.push({ p, pic, gl });
     if (CO.phase === 'm') CO.ms.forEach(M => {
       if (!coActive(M) || (M.d.mark === false && !ghost)) return;
       M.T.forEach((t, i) => {
@@ -2676,14 +2675,38 @@
         if (t.k === 'dst' && !ghost && !(bag && bag === M.d.item)) return;
         if (t.k === 'box' && !ghost && !CO.fz.some(v => v > 0) && !M.v) return;
         if (t.k === 'safe' && !ghost && !(CO.know & (1 << VS.mySlot))) return;
-        mk(ang(t.p), t.k === 'dst' ? (M.d.to === 'gen' ? 'gen' : 'camp') : M.id, t.k === 'dst' ? 'gl' : 'dn');
+        if (t.k === 'dst') add(t.p, M.d.to === 'gen' ? 'gen' : 'camp', true); else add(t.p, M.id, false);
       });
     });
-    if (bag && !ghost) { const M = CO.ms.find(m => m.d.item === bag); if (M) mk(ang(M.T[M.T.length - 1].p), M.d.to === 'gen' ? 'gen' : 'camp', 'gl'); }
-    if (CO.phase === 'esc') mk(ang(CO.esc.step === 2 ? W.GOAL : world.props.esc.act), CO.esc.step === 2 ? 'smoke' : ESC_PIC[W.SITES.esc], CO.esc.step === 2 ? 'gl' : 'dn');
-    if (ghost && CO.phase === 'm') { W.SITES.caches.forEach((c, i) => { if (CO.fuseAt.has(i) && !CO.searched.has(i)) mk(ang(c), 'fuse', 'dn'); }); }
-    CO.drops.forEach(d => { if (d) mk(ang(d), d.k === 'fz' ? 'fuse' : 'crate', 'dn'); });
-    CO.pings.forEach(p => { const pl = VS.players[p.s]; mk0(ang(p), '◆', '', `color:${p.f ? '#ff4060' : pl ? pl.color : '#9fd8ff'};font-size:17px`); });
+    if (bag && !ghost) { const M = CO.ms.find(m => m.d.item === bag); if (M) add(M.T[M.T.length - 1].p, M.d.to === 'gen' ? 'gen' : 'camp', true); }
+    if (CO.phase === 'esc') add(CO.esc.step === 2 ? W.GOAL : world.props.esc.act, CO.esc.step === 2 ? 'smoke' : ESC_PIC[W.SITES.esc], CO.esc.step === 2);
+    if (ghost && CO.phase === 'm') W.SITES.caches.forEach((c, i) => { if (CO.fuseAt.has(i) && !CO.searched.has(i)) add(c, 'fuse', false); });
+    CO.drops.forEach(d => { if (d) add(d, d.k === 'fz' ? 'fuse' : 'crate', false); });
+    CO.pings.forEach(p => { const pl = VS.players[p.s]; out.push({ p, ping: p.f ? '#ff4060' : pl ? pl.color : '#9fd8ff' }); });
+    return out;
+  }
+  // the compass: every mark is a drawn pictogram (js/pictos.js); places to take things to and the way out wear a red ring
+  function coCompass(mk0, vp, marks) {
+    const ang = q => Math.atan2(-(q.x - vp.x), -(q.z - vp.z)), sz = DG.MOBILE ? 20 : 24;
+    marks.forEach(m => {
+      if (m.ping) mk0(ang(m.p), '◆', '', `color:${m.ping};font-size:17px`);
+      else mk0(ang(m.p), DG.PICTO.svg(m.pic, { size: sz, ring: m.gl ? '#ff6a48' : undefined }), 'pic');
+    });
+  }
+  // the minimap (js/minimap.js): the ground round you, your team and the same marks, within its distance; the camp
+  // is always on it when near
+  let mapT = 0;
+  function coMinimap(dt, vp, vyaw, marks) {
+    const cv = $('coMap'), show = !!(DG.MINIMAP && !(VS.dead && VS.dead.a && VS.dead.a.catch));
+    cv.style.display = show ? '' : 'none'; if (!show) return;
+    mapT -= dt; if (mapT > 0) return; mapT = 1 / 30;
+    const L = marks.map(m => m.ping ? { x: m.p.x, z: m.p.z, kind: 'ping', color: m.ping } : { x: m.p.x, z: m.p.z, kind: 'pic', name: m.pic, ring: m.gl ? '#ff6a48' : undefined });
+    if (W.SITES && W.SITES.camp && !L.some(m => m.name === 'camp')) L.unshift({ x: W.SITES.camp.x, z: W.SITES.camp.z, kind: 'pic', name: 'camp' });
+    VS.players.forEach(p => {
+      if (!p || p.slot === VS.mySlot || p.st === 'gone' || p.st === 'escaped') return;
+      L.push({ x: p.tp.pos.x, z: p.tp.pos.z, kind: p.st === 'alive' ? 'mate' : 'ghost', color: p.color, yaw: p.yaw || 0 });
+    });
+    DG.MINIMAP.draw(cv, { x: vp.x, z: vp.z, yaw: vyaw }, L);
   }
 
   // ---------------- main loop ----------------

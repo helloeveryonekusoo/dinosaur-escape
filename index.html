@@ -113,6 +113,8 @@
   #coObj .dn{color:#9fc98a}
   #coObj .ev{margin-top:4px;color:#ffb070;font-size:12px}
   #coFlash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+  #coMap{position:absolute;right:16px;top:16px;width:180px;height:180px;pointer-events:none;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
+  body.touch #coMap{right:calc(12px + env(safe-area-inset-right));top:58px;width:124px;height:124px}
   #coTeam{margin-top:6px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px;font-size:12px}
   #coTeam .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
   #coTeam .gh{color:#9fd8ff} #coTeam .es{color:#c9e6a0} #coTeam .gn{color:#888}
@@ -266,6 +268,7 @@
 <!-- co-op: objective and team, the hold-to-act prompt, the ghost banner -->
 <div id="coop" class="layer">
   <div class="panel"><div id="coObj"></div><div id="coTeam"></div></div>
+  <canvas id="coMap" aria-label="周りの地図"></canvas>
   <div id="coFlash"></div>
   <div id="coPrompt"><span id="coPromptText"></span><i><b id="coPromptBar"></b></i></div>
   <div id="coGhost"></div>
@@ -286,7 +289,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
-const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/pictos.js','js/game.js'];
+const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/pictos.js','js/minimap.js','js/game.js'];
 for (const f of files) {
   await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
 }

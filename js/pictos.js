@@ -86,5 +86,5 @@
       `<circle cx="12" cy="12" r="12.3" fill="url(#pgb)" stroke="${ring}" stroke-width="1.2" opacity="0.94"/>` +
       `<circle cx="12" cy="12" r="11" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="0.6"/>` + body + `</svg>`;
   }
-  DG.PICTO = { svg, has: n => !!P[n] };
+  DG.PICTO = { svg, has: n => !!P[n], names: Object.keys(P) };
 })();
