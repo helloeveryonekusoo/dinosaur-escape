@@ -323,6 +323,8 @@
     ['hud', 'end', 'pause'].forEach(id => $(id).style.display = 'none'); $('menu').style.display = 'flex';
     showDex(dexIdx);
   }
+  // the full-screen black (a catch's blackout) and red edge (being caught, a predator close) off
+  function resetScreenFx() { $('fade').style.opacity = 0; $('vign').style.opacity = 0; }
   function msg(t, dur) { $('msg').textContent = t; $('msg').style.opacity = 1; msgT = dur || 3; }
 
   // ---------------- game start ----------------
@@ -353,7 +355,7 @@
     ['menu', 'end', 'pause'].forEach(id => $(id).style.display = 'none'); $('hud').style.display = 'block';
     P.pos.set(W.START.x, W.height(W.START.x, W.START.z) + 1.65, W.START.z); P.vel.set(0, 0, 0);
     P.yaw = Math.atan2(-(W.GOAL.x - W.START.x), -(W.GOAL.z - W.START.z)); P.pitch = 0; P.stam = 1; P.crouch = false; P.exhausted = false; TI.run = false; TI.jump = false;
-    killer = null; runT = 0; shake = 0; items.reset(DF);
+    killer = null; runT = 0; shake = 0; items.reset(DF); resetScreenFx();
     const rnd = DG.N.rng((Math.random() * 1e9) | 0);
     const along = (f, side) => new V(lerp(W.START.x, W.GOAL.x, f) + side, 0, lerp(W.START.z, W.GOAL.z, f));
     // (the extra T-rexes of the harder levels start well off to the sides, never close to the start)
@@ -883,7 +885,9 @@
     $('vsLobby').style.display = 'none'; $('race').style.display = 'none'; $('count').style.display = 'none'; $('spec').style.display = 'none'; SPEC.shown = false; document.body.classList.remove('watching');
     $('btnRetry').textContent = 'もう一度'; $('btnTitle').textContent = 'タイトルへ'; $('endRank').innerHTML = ''; vsStatus('');
     setDiff(diffKey); toMenu();
-    if (hadRace) newMap(); // the race map has no glade for the title screen and three starts; build a normal one
+    if (hadRace) { // the race map has no glade for the title screen and three starts; build a normal one, kept for the next game
+      building = true; newMap().then(() => { mapUsed = false; }).finally(() => { building = false; });
+    }
   }
   function vsAbort(text) { vsLeaveRoom(); openLobby(); vsStatus(text); }
   // after a race: back to the room (the host can start another one)
@@ -1796,6 +1800,8 @@
     CO.ms.forEach(M => M.T.forEach(t => { if (t.lab && t.lab.parent) { world.scene.remove(t.lab); disposeTree(t.lab); } }));
     if (CO.wire) { world.scene.remove(CO.wire.line); disposeTree(CO.wire.line); CO.wire = null; }
     A.rain(0); A.hum(false);
+    // a catch may still be playing when the game ends and everyone leaves: drop its body and lift its blackout
+    dinos.forEach(a => { if (a.catch) clearCatch(a); }); VS.dead = null; resetScreenFx();
     document.body.classList.remove('coop', 'ghost');
     $('coop').style.display = 'none'; $('goal').style.display = ''; $('coPrompt').style.display = 'none'; $('coGhost').style.display = 'none'; $('coFlash').style.opacity = 0;
     CO.hold = ''; CO.pings = []; CO.drops = []; CO.traps = []; CO.ms = []; P.hook = null; P.slide = 0;
