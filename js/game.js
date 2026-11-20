@@ -369,6 +369,7 @@
     const used = {};
     dinos.forEach(a => {
       const hunter = !!a.ai.spawnEvery, ri = roster.indexOf(a);
+      if (!hunter && !spots[a.s.key]) { activateDino(a, along(0.5, 0), 0, false); return; } // a co-op-only species: kept out of the forest
       const k = hunter ? 'trex' : a.s.key, n = hunter ? (ri < 0 ? spots.trex.length : ri + 1) : (used[k] = (used[k] || 0) + 1), sp = spots[k][Math.min(n - 1, spots[k].length - 1)];
       const p = along(sp[0], sp[1]).add(new V((rnd() - 0.5) * 30, 0, (rnd() - 0.5) * 30));
       if (k === 'utah') p.add(new V(n * 6, 0, n * 4));
@@ -1697,8 +1698,8 @@
     const u = g.userData;
     // a CC0 model (js/props.js) if it has loaded, else null and the simple shape below is used
     const md = (n, size, x, y, z, opt) => { const o = DG.PROPS.get(n, size, opt); if (o) { o.position.set(x || 0, y || 0, z || 0); g.add(o); } return o; };
-    if (kind === 'antenna') { cyl(0.06, 5, 0x55595a, 0, 2.5, 0, { metalness: 0.6 }); box(0.9, 0.06, 0.06, 0x55595a, 0, 4.6); box(0.4, 0.5, 0.25, 0x3e4a3a, 0, 1.0, 0.15); u.on = glowS(0x60ff90, 1.2, 0); u.on.position.y = 5.1; g.add(u.on); u.dim = glowS(0xff4030, 0.8); u.dim.position.y = 5.1; g.add(u.dim); }
-    else if (kind === 'cam') { cyl(0.08, 1.6, 0x4a3a26, 0, 0.8); box(0.22, 0.3, 0.18, 0x3a4a2a, 0, 1.45, 0.12); u.dim = glowS(0xff3020, 0.5); u.dim.position.set(0, 1.55, 0.25); g.add(u.dim); }
+    if (kind === 'antenna') { if (!md('antenna', 5.15, 0, 0, 0, { fit: 'h' })) { cyl(0.06, 5, 0x55595a, 0, 2.5, 0, { metalness: 0.6 }); box(0.9, 0.06, 0.06, 0x55595a, 0, 4.6); box(0.4, 0.5, 0.25, 0x3e4a3a, 0, 1.0, 0.15); } u.on = glowS(0x60ff90, 1.2, 0); u.on.position.y = 5.1; g.add(u.on); u.dim = glowS(0xff4030, 0.8); u.dim.position.y = 5.1; g.add(u.dim); }
+    else if (kind === 'cam') { const tc = md('trailcam', 1.7, 0, 0, 0, { fit: 'h' }); if (!tc) { cyl(0.08, 1.6, 0x4a3a26, 0, 0.8); box(0.22, 0.3, 0.18, 0x3a4a2a, 0, 1.45, 0.12); } u.dim = glowS(0xff3020, 0.5); if (tc) u.dim.position.set(0, 1.4, -0.22); else u.dim.position.set(0, 1.55, 0.25); g.add(u.dim); }
     else if (kind === 'page') { const p = md('book', 0.45) || box(0.3, 0.01, 0.4, 0xf0ead8); if (!p.isGroup) p.position.y = 0.05; p.rotation.y = k; u.dim = glowS(0xfff6d0, 1.3, 0.55); u.dim.position.y = 0.3; g.add(u.dim); u.hide = true; }
     else if (kind === 'brazier') {
       const bf = md('bonfire', 1.3, 0, -0.08); // a ring of stones with a few charred logs inside
@@ -1710,25 +1711,49 @@
       if (!md('buoy', 1.6, 0, -0.49, 0, { fit: 'h' })) { cyl(0.35, 0.5, 0xd8602a, 0, 0.25); cyl(0.04, 1.4, 0x888888, 0, 0.9); }
       u.dim = glowS(0xffb060, 1, 0.6); u.dim.position.y = 1.4; g.add(u.dim);
     }
-    else if (kind === 'board') { cyl(0.07, 2, 0x4a3a26, -0.7, 1); cyl(0.07, 2, 0x4a3a26, 0.7, 1); box(1.7, 1, 0.08, 0x6a5a3a, 0, 1.5); box(0.5, 0.35, 0.02, 0xe8e0c8, 0.2, 1.55, 0.06); }
-    else if (kind === 'safe') { box(0.9, 1.1, 0.8, 0x2e3436, 0, 0.55, 0, { metalness: 0.6, roughness: 0.4 }); cyl(0.12, 0.05, 0x999999, 0.15, 0.6, 0.42).rotation.x = Math.PI / 2; u.on = glowS(0x60ff90, 0.8, 0); u.on.position.set(0, 1.25, 0); g.add(u.on); }
+    else if (kind === 'board') { if (!md('noticeboard', 1.5, 0, 0, 0, { fit: 'h' })) { cyl(0.07, 2, 0x4a3a26, -0.7, 1); cyl(0.07, 2, 0x4a3a26, 0.7, 1); box(1.7, 1, 0.08, 0x6a5a3a, 0, 1.5); box(0.5, 0.35, 0.02, 0xe8e0c8, 0.2, 1.55, 0.06); } }
+    else if (kind === 'safe') { if (!md('safe', 1.1, 0, 0, 0, { fit: 'h' })) { box(0.9, 1.1, 0.8, 0x2e3436, 0, 0.55, 0, { metalness: 0.6, roughness: 0.4 }); cyl(0.12, 0.05, 0x999999, 0.15, 0.6, 0.42).rotation.x = Math.PI / 2; } u.on = glowS(0x60ff90, 0.8, 0); u.on.position.set(0, 1.25, 0); g.add(u.on); }
     else if (kind === 'radio') { if (!md('radio', 0.5)) box(0.25, 0.4, 0.12, 0x2a2a2a, 0, 0.12).rotation.z = 1.4; u.hide = true; }
     else if (kind === 'fuel') { if (!md('gascan', 0.5, 0, 0, 0, { fit: 'h' })) { box(0.35, 0.5, 0.22, 0xb82a1a, 0, 0.25, 0, { metalness: 0.4 }); cyl(0.04, 0.1, 0x222222, 0.1, 0.55, 0); } u.hide = true; u.dim = glowS(0xff6040, 1, 0.45); u.dim.position.y = 0.7; g.add(u.dim); }
-    else if (kind === 'egg') { if (k === 0) { const nest = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.35, 6, 14), m(0x4a3a22)); nest.rotation.x = Math.PI / 2; nest.position.y = 0.15; g.add(nest); } const e = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), m(0xd8d0b0, { roughness: 0.6 })); e.scale.y = 1.35; e.position.y = 0.3; g.add(e); u.egg = e; }
-    else if (kind === 'drone') { box(1.2, 0.18, 1.2, 0x2a2e33, 0, 0.12, 0, { metalness: 0.5 }); [[0.6, 0.6], [-0.6, 0.6], [0.6, -0.6], [-0.6, -0.6]].forEach(([x, z]) => cyl(0.25, 0.03, 0x555555, x, 0.25, z)); u.hide = true; u.blink = glowS(0xff2010, 2.4); u.blink.position.y = 0.5; g.add(u.blink); }
-    else if (kind === 'pole') { cyl(0.12, 6, 0x4a3a26, 0, 3); box(1.4, 0.1, 0.1, 0x4a3a26, 0, 5.6); const w = cyl(0.02, 3, 0x111111, 0.6, 3.8, 0); w.rotation.z = 0.5; md('powerbox', 0.55, 0, 1.3, 0.14, { fit: 'h' }); /* junction box on the pole */ u.dim = glowS(0x9fd8ff, 1.2, 0.8); u.dim.position.set(1, 2.6, 0); g.add(u.dim); u.spark = true; }
+    else if (kind === 'egg') {
+      if (k === 0 && !md('nest', 2.9)) { const nest = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.35, 6, 14), m(0x4a3a22)); nest.rotation.x = Math.PI / 2; nest.position.y = 0.15; g.add(nest); }
+      let e = md('egg', 0.42, 0, k === 0 ? 0.04 : 0, 0, { fit: 'h' });
+      if (!e) { e = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), m(0xd8d0b0, { roughness: 0.6 })); e.scale.y = 1.35; e.position.y = 0.3; g.add(e); }
+      u.egg = e;
+    }
+    else if (kind === 'drone') { const dr = md('drone', 1.5); if (dr) dr.rotation.z = 0.12; else { box(1.2, 0.18, 1.2, 0x2a2e33, 0, 0.12, 0, { metalness: 0.5 }); [[0.6, 0.6], [-0.6, 0.6], [0.6, -0.6], [-0.6, -0.6]].forEach(([x, z]) => cyl(0.25, 0.03, 0x555555, x, 0.25, z)); } u.hide = true; u.blink = glowS(0xff2010, 2.4); u.blink.position.y = 0.5; g.add(u.blink); }
+    else if (kind === 'pole') { if (!md('utilpole', 6.13, 0, 0, 0, { fit: 'h' })) { cyl(0.12, 6, 0x4a3a26, 0, 3); box(1.4, 0.1, 0.1, 0x4a3a26, 0, 5.6); const w = cyl(0.02, 3, 0x111111, 0.6, 3.8, 0); w.rotation.z = 0.5; } md('powerbox', 0.55, 0, 1.3, 0.14, { fit: 'h' }); /* junction box on the pole */ u.dim = glowS(0x9fd8ff, 1.2, 0.8); u.dim.position.set(0.2, 1.75, 0.2); g.add(u.dim); u.spark = true; /* sparks at the junction box */ }
     else if (kind === 'hurt') {
-      box(0.6, 0.1, 1.9, 0x5a6a4a, 0, 0.12);
+      const st = md('stretcher', 2.3);
+      if (!st) box(0.6, 0.1, 1.9, 0x5a6a4a, 0, 0.12);
       const who = hurtFigure();
-      if (who) { who.position.y = 0.17; g.add(who); }
+      if (who) { who.position.y = st ? 0.11 : 0.17; g.add(who); }
       else { const b = cyl(0.2, 1.2, 0x3a4a5a, 0, 0.35, 0.1); b.rotation.x = Math.PI / 2; const h = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), m(0xd9b48f)); h.position.set(0, 0.35, -0.75); g.add(h); }
       u.hide = true;
     }
-    else if (kind === 'valve') { md('pipes', 2.2, 0, 0, 0.45); cyl(0.12, 1.1, 0x5a5e5a, 0, 0.55, 0, { metalness: 0.6 }); const w = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 6, 16), m(0xb02a1a, { metalness: 0.4 })); w.position.y = 1.15; w.rotation.x = Math.PI / 2; g.add(w); u.wheel = w; }
-    else if (kind === 'cage') { [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]].forEach(([x, z]) => cyl(0.08, 3, 0x55504a, x, 1.5, z, { metalness: 0.6 })); box(2.6, 0.1, 2.6, 0x55504a, 0, 3, 0, { metalness: 0.6 }); u.gate = box(2.4, 0.1, 0.1, 0x55504a, 0, 2.7, -1.2, { metalness: 0.6 }); u.meat = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), m(0x7a1e16)); u.meat.position.y = 0.3; u.meat.visible = false; g.add(u.meat); }
-    else if (kind === 'lookout') { [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].forEach(([x, z]) => cyl(0.12, 4, 0x4a3a26, x, 2, z)); box(3.4, 0.15, 3.4, 0x5a4a30, 0, 4); box(3.4, 0.9, 0.08, 0x5a4a30, 0, 4.5, 1.65); u.ring = new THREE.Mesh(new THREE.RingGeometry(9.6, 10, 48), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false })); u.ring.rotation.x = -Math.PI / 2; u.ring.position.y = 0.15; g.add(u.ring); }
+    else if (kind === 'valve') {
+      md('pipes', 2.2, 0, 0, 0.45);
+      if (!md('valveriser', 1.2, 0, 0, 0, { fit: 'h' })) cyl(0.12, 1.1, 0x5a5e5a, 0, 0.55, 0, { metalness: 0.6 });
+      const wm = DG.PROPS.get('valvewheel', 0.86);
+      let w;
+      if (wm) { // a holder laid on its side, so that turning it about its z axis turns the flat wheel about its hub
+        w = new THREE.Group(); w.rotation.x = Math.PI / 2; wm.rotation.x = -Math.PI / 2; wm.position.z = wm.userData.size.y / 2; /* the holder's +z is world down: centre the wheel on the hub */ w.add(wm);
+      } else { w = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 6, 16), m(0xb02a1a, { metalness: 0.4 })); w.rotation.x = Math.PI / 2; }
+      w.position.y = wm ? 1.13 : 1.15; g.add(w); u.wheel = w;
+    }
+    else if (kind === 'cage') {
+      // a chain-link cage open on its +z side, where the gate drops once a predator is inside
+      // (built twice the size of a fence-panel cage, so that a predator's head and shoulders fit in)
+      const K = 1.98, gm = md('cage', 3.03 * K, 0, 0, 0, { fit: 'h' }) && DG.PROPS.get('cagegate', 2.73 * K, { fit: 'h' });
+      if (gm) { // hinged along the top of the opening: held up and out while the trap is set, it falls shut
+        u.gate = new THREE.Group(); u.gate.position.set(0, 2.82 * K, 1.27 * K); gm.position.y = -2.78 * K; u.gate.add(gm); g.add(u.gate); u.gateRot = [0, -1.45];
+      }
+      else { [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]].forEach(([x, z]) => cyl(0.08, 3, 0x55504a, x, 1.5, z, { metalness: 0.6 })); box(2.6, 0.1, 2.6, 0x55504a, 0, 3, 0, { metalness: 0.6 }); u.gate = box(2.4, 0.1, 0.1, 0x55504a, 0, 2.7, -1.2, { metalness: 0.6 }); u.gateY = [0.9, 2.7]; }
+      u.meat = DG.PROPS.get('meat', 0.7) || new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), m(0x7a1e16)); if (u.meat.isMesh) u.meat.position.y = 0.3; u.meat.visible = false; g.add(u.meat);
+    }
+    else if (kind === 'lookout') { if (!md('lookout', 5.11, 0, 0, 0, { fit: 'h' })) { [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]].forEach(([x, z]) => cyl(0.12, 4, 0x4a3a26, x, 2, z)); box(3.4, 0.15, 3.4, 0x5a4a30, 0, 4); box(3.4, 0.9, 0.08, 0x5a4a30, 0, 4.5, 1.65); } u.ring = new THREE.Mesh(new THREE.RingGeometry(9.6, 10, 48), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false })); u.ring.rotation.x = -Math.PI / 2; u.ring.position.y = 0.15; g.add(u.ring); }
     else if (kind === 'door') {
-      box(4, 3, 0.3, 0x4a4a46, 0, 1.5);
+      if (!md('wall', 3.1, 0, 0, 0, { fit: 'h' })) box(4, 3, 0.3, 0x4a4a46, 0, 1.5); // a shed wall with a doorway
       // a roller shutter on each face, widened to 1.6 m; they roll up as the door is forced
       if (DG.PROPS.has('door')) {
         u.part = new THREE.Group(); u.part.position.set(0, 2.4, 0); g.add(u.part); u.roll = true;
@@ -1751,7 +1776,7 @@
       o.position.set(t.p.x, M.d.where === 'water' ? W.WATER : gy(t.p), t.p.z); o.rotation.y = (i * 1.7 + M.stage) % 6.283;
       CO.marks.props.add(o); t.obj = o;
       if (M.d.nest && i > 0) return; // one label for the whole nest
-      t.lab = labelSprite(M.d.icon + ' ' + M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
+      t.lab = labelSprite(M.d.icon + ' ' + M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : kind === 'cage' ? 6.8 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
     }));
     world.scene.add(g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props);
   }
@@ -2398,7 +2423,7 @@
           if (u.blink) u.blink.material.opacity = Math.sin(T * 6) > 0.4 ? 1 : 0.05;
           if (u.wheel) u.wheel.rotation.z = M.s[ti] * 12;
           if (u.meat) u.meat.visible = M.s[ti] >= 1;
-          if (u.gate) u.gate.position.y = M.v ? 0.9 : 2.7;
+          if (u.gate) { if (u.gateRot) u.gate.rotation.x = u.gateRot[M.v ? 0 : 1]; else u.gate.position.y = u.gateY[M.v ? 0 : 1]; }
           if (M.d.kind === 'door' && u.part) { if (u.roll) u.part.scale.y = 1 - Math.min(M.s[ti], 1) * 0.9; else u.part.position.x = M.s[ti] * 1.5; }
           if (u.ring) u.ring.material.opacity = act ? 0.2 + 0.15 * Math.sin(T * 3) : 0;
         }

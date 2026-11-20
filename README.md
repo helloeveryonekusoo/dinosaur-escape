@@ -104,6 +104,8 @@
 - 協力モードの沼の捕食者（`models/spino/spino.glb`）: このゲームのために Blender で制作したオリジナルの棘竜類モデル。動き（待機・歩く・走る・咆哮・前屈み咆哮・噛みつき・捕食）も Blender で付けたものです
 - オンラインで見える仲間・幽霊の人物モデル（`models/human/survivor.glb`）: [MPFB](https://static.makehumancommunity.org/mpfb.html)（MakeHuman）で作成。体・肌・目・髪・服は MakeHuman の [CC0](https://static.makehumancommunity.org/about/license.html) アセット。動き（待機・歩く・走る・しゃがむ・漂う・倒れる・横たわる）は Blender で付けたものです
 - 協力モードの小物（無線機・研究ノート・軍用の木箱・燃料缶・石のたき火台・シャッター扉・配管・桟橋・ドラム缶・ライフル・救急箱・手榴弾・発電機・配電盤・ブイ）の3Dモデル: [Poly Haven](https://polyhaven.com/models) — [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（テクスチャを縮小し、一部を組み合わせて `models/props/` に収録）
+- 協力モードの掲示板・檻と檻の扉・ランタン・電柱・坑道の鉄門・坑道の岩山・迷彩泥のバケツの3Dモデル: Poly Haven の「Standing Chalkboard 01」「Modular Chainlink Fence」「Wooden Lantern 01」「Modular Electricity Poles」「Large Iron Gate」「Rock Moss Set 01」「Wooden Bucket 01」— [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（組み合わせ・縮小して `models/props/` に収録）
+- そのほかのアイテム（トラバサミ・爆竹・ワイヤーフック・信号銃・興奮剤・ダイナマイト・アドレナリン・発煙筒・生肉・動体探知機）とミッションの小物・場所（中継アンテナ・トレイルカメラ・金庫・卵と巣・ドローン・担架・バルブ・見張り台・倉庫の壁・テント・無線塔・着陸地点の杭・ボート・坑道の入口）の3Dモデル: このゲームのために Blender で制作したもの
 - 描画: [three.js](https://threejs.org/)（MIT License）
 - 3人対戦の通信: [PeerJS](https://peerjs.com/)（MIT License）
 - 地形・木・岩・テクスチャ・効果音は、すべてプログラムで生成しています。

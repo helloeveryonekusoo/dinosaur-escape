@@ -5,7 +5,11 @@
 (function () {
   const DG = window.DG;
   const NAMES = ['radio', 'book', 'crate', 'gascan', 'bonfire', 'door', 'pipes', 'dock', 'barrel', 'rifle', 'firstaid',
-    'grenade', 'generator', 'powerbox', 'buoy'];
+    'grenade', 'generator', 'powerbox', 'buoy',
+    // items, mission props and places modelled for this game in Blender (some built from Poly Haven CC0 parts)
+    'beartrap', 'cracker', 'hook', 'flaregun', 'stim', 'dynamite', 'adren', 'roadflare', 'meat', 'tracker', 'mudbucket',
+    'antenna', 'trailcam', 'noticeboard', 'safe', 'egg', 'nest', 'drone', 'stretcher', 'utilpole', 'valveriser', 'valvewheel',
+    'cage', 'cagegate', 'lantern', 'lookout', 'wall', 'tent', 'stake', 'skiff', 'minemouth', 'minegate', 'minerocks', 'radiotower'];
   const TINT = { door: 0xb8ae9e, pipes: 0xa8a49a }; // scans that look too clean for a swamp: dirtied a little
   const lib = {};
   let ready = null;
@@ -17,7 +21,7 @@
         g.scene.traverse(o => {
           if (!o.isMesh) return;
           o.castShadow = true; o.receiveShadow = true; o.userData.shared = true; // geometry and material belong to the library
-          (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.metalness = Math.min(m.metalness, 0.3); m.roughness = Math.max(m.roughness, 0.55); if (TINT[n] && !m.userData.tinted) { m.color.multiply(new THREE.Color(TINT[n])); m.userData.tinted = true; } });
+          (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.metalness = Math.min(m.metalness, 0.3); m.roughness = Math.max(m.roughness, 0.55); if (m.alphaTest > 0 || m.transparent) m.side = THREE.DoubleSide; /* chain-link fence: seen from both sides */ if (TINT[n] && !m.userData.tinted) { m.color.multiply(new THREE.Color(TINT[n])); m.userData.tinted = true; } });
         });
         lib[n] = g.scene;
       })));

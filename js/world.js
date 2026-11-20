@@ -775,7 +775,7 @@
       // camp: a tent, a crate and a dying fire
       {
         const c = W.SITES.camp, g = new THREE.Group(); g.position.set(c.x, ground(c), c.z);
-        { // a ridge tent: a three-sided prism lying on one face, with its two ends open
+        if (!model(g, 'tent', 2.0, -5, 0, -3, { fit: 'h' }, 0.6 + Math.PI / 2)) { // a ridge tent: a three-sided prism lying on one face, with its two ends open
           const tent = new THREE.Group(); tent.position.set(-5, 0.625, -3); tent.rotation.y = 0.6; g.add(tent);
           const roof = new THREE.CylinderGeometry(1.25, 1.25, 3.2, 3, 1, true).rotateZ(-Math.PI / 2).rotateX(-Math.PI / 2); // ridge along x, a flat face down
           tent.add(new THREE.Mesh(roof, mat(0x4d5a34, { side: THREE.DoubleSide, roughness: 0.95 })));
@@ -802,12 +802,14 @@
           const a = new V(ax * 1.6, 0, az * 1.6), b = new V(ax * 0.35, H, az * 0.35), m = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, a.distanceTo(b), 5), steel);
           m.position.copy(a).lerp(b, 0.5); m.quaternion.setFromUnitVectors(new V(0, 1, 0), b.clone().sub(a).normalize()); return m;
         };
-        [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([x, z]) => g.add(leg(x, z)));
-        for (let k = 1; k < 9; k++) { // braces
-          const y = k * H / 9, w = 1.6 - (1.6 - 0.35) * (y / H);
-          const ring = new THREE.Mesh(new THREE.TorusGeometry(w * 1.41, 0.03, 3, 4), steel); ring.rotation.set(Math.PI / 2, 0, Math.PI / 4); ring.position.y = y; g.add(ring);
+        if (!model(g, 'radiotower', H + 0.17, 0, 0, 0, { fit: 'h' })) { // a lattice mast (the model, or these simple legs and braces)
+          [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([x, z]) => g.add(leg(x, z)));
+          for (let k = 1; k < 9; k++) { // braces
+            const y = k * H / 9, w = 1.6 - (1.6 - 0.35) * (y / H);
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(w * 1.41, 0.03, 3, 4), steel); ring.rotation.set(Math.PI / 2, 0, Math.PI / 4); ring.position.y = y; g.add(ring);
+          }
+          const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.2, 0.25, 12), steel); dish.rotation.z = Math.PI / 2; dish.position.set(0.5, H - 3, 0); g.add(dish);
         }
-        const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.2, 0.25, 12), steel); dish.rotation.z = Math.PI / 2; dish.position.set(0.5, H - 3, 0); g.add(dish);
         const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshBasicMaterial({ color: 0x401010 })); bulb.position.y = H + 0.2; g.add(bulb);
         const beacon = new THREE.PointLight(0xff2010, 0, 60, 1.4); beacon.position.y = H + 0.2; g.add(beacon);
         const halo = glowSprite(0xff2a10, 4); halo.position.y = H + 0.2; halo.material.opacity = 0; g.add(halo);
@@ -836,8 +838,11 @@
           const crate = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.85, 0.9), mat(0x5a4629)); crate.position.y = 0.42; g.add(crate);
           const lid = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.08, 0.96), mat(0x4a3820)); lid.position.set(0, 0.88, 0.1); lid.rotation.x = -0.35; g.add(lid);
         }
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.8, 5), mat(0x2b2118)); pole.position.set(0.9, 0.9, 0); g.add(pole);
-        const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffcf7a })); lantern.position.set(0.9, 1.75, 0); g.add(lantern);
+        // a lantern on a post beside them: the model hangs from an arm, with a small bright core for its flame
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 2.0, 5), mat(0x2b2118)); pole.position.set(0.9, 1.0, 0); g.add(pole);
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4, 4), mat(0x2b2118)); arm.rotation.z = Math.PI / 2; arm.position.set(1.08, 1.95, 0); g.add(arm);
+        const lm = model(g, 'lantern', 0.45, 1.25, 1.48, 0, { fit: 'h' });
+        const lantern = new THREE.Mesh(new THREE.SphereGeometry(lm ? 0.05 : 0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffcf7a })); lantern.position.set(lm ? 1.25 : 0.9, lm ? 1.66 : 1.75, 0); g.add(lantern);
         const glow = glowSprite(0xffb050, 2.2); glow.position.copy(lantern.position); g.add(glow);
         g.traverse(o => { if (o.isMesh && o !== lantern) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g); props.caches.push({ group: g, glow, lantern, pos: c.clone().setY(ground(c)), ph: rnd() * 6 });
@@ -847,7 +852,12 @@
       const ES = W.SITES, l = ES.lz, face = Math.atan2(ES.out.x, ES.out.z);
       if (ES.esc === 0) { // landing zone: a ring of stakes round a flattened clearing
         const g = new THREE.Group(); g.position.set(l.x, ground(l), l.z);
-        for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283, s = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.1, 5), mat(0x8a7a50)); s.position.set(Math.sin(a) * 9, 0.5, Math.cos(a) * 9); s.rotation.z = (rnd() - 0.5) * 0.3; g.add(s); }
+        for (let i = 0; i < 8; i++) {
+          const a = i / 8 * 6.283, x = Math.sin(a) * 9, z = Math.cos(a) * 9, y = W.height(l.x + x, l.z + z) - g.position.y;
+          const s = (DG.PROPS && DG.PROPS.get('stake', 1.3, { fit: 'h' })) || new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.1, 5), mat(0x8a7a50));
+          s.position.set(x, s.isMesh ? y + 0.5 : y - 0.15, z); s.rotation.set((rnd() - 0.5) * 0.12, a + rnd(), (rnd() - 0.5) * 0.2); g.add(s);
+        }
+        g.traverse(o => { if (o.isMesh) o.castShadow = true; });
         scene.add(g); props.lz = g;
         props.esc = { kind: 0, act: ES.tower };
       } else if (ES.esc === 1) { // a jetty out over the pool, and an old motor boat tied to its end
@@ -858,29 +868,42 @@
           [[-1.1, 0], [1.1, 0], [-1.1, 4.2], [1.1, 4.2]].forEach(([x, z]) => { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 2.6, 6), wood); s.position.set(x, y0 - 0.9, z); g.add(s); });
         }
         const boat = new THREE.Group(); boat.position.set(0, W.WATER + 0.05, 11);
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.7, 5.2), mat(0x2f4a52, { roughness: 0.7 })); hull.position.y = 0.2; boat.add(hull);
-        const bow = new THREE.Mesh(new THREE.ConeGeometry(1.05, 1.6, 4, 1), mat(0x2f4a52, { roughness: 0.7 })); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(1, 1, 0.45); bow.position.set(0, 0.2, 3.4); boat.add(bow);
-        const motor = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.5), mat(0x222222, { metalness: 0.4 })); motor.position.set(0, 0.7, -2.7); boat.add(motor);
+        if (!model(boat, 'skiff', 5.26, 0, -0.26, 0, { fit: 'z' }, Math.PI)) { // an aluminium skiff, its outboard at the stern (-z)
+          const hull = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.7, 5.2), mat(0x2f4a52, { roughness: 0.7 })); hull.position.y = 0.2; boat.add(hull);
+          const bow = new THREE.Mesh(new THREE.ConeGeometry(1.05, 1.6, 4, 1), mat(0x2f4a52, { roughness: 0.7 })); bow.rotation.set(Math.PI / 2, Math.PI / 4, 0); bow.scale.set(1, 1, 0.45); bow.position.set(0, 0.2, 3.4); boat.add(bow);
+          const motor = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.5), mat(0x222222, { metalness: 0.4 })); motor.position.set(0, 0.7, -2.7); boat.add(motor);
+        }
         g.add(boat);
         g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g); props.lz = g; props.boat = boat;
         props.esc = { kind: 1, act: ES.lz.clone().addScaledVector(ES.out, 4) }; // the engine is started from the jetty's end
       } else { // a mine tunnel: a heap of rock with a timbered mouth, barred by a gate until it is forced open
         const g = new THREE.Group(); g.position.set(l.x, ground(l), l.z); g.rotation.y = face;
-        const rock = mat(0x3c3a36, { roughness: 0.95 });
-        const heap = new THREE.Mesh(new THREE.DodecahedronGeometry(9, 1), rock); heap.scale.set(1.5, 0.95, 1.1); heap.position.set(0, 2, 10); g.add(heap);
-        [[-7, 1, 6, 4], [7, 0.5, 7, 4.5], [0, 7, 9, 5]].forEach(([x, y, z, r]) => { const b = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rock); b.position.set(x, y, z); b.rotation.set(rnd() * 3, rnd() * 3, 0); g.add(b); });
-        const hole = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), new THREE.MeshBasicMaterial({ color: 0x000000 })); hole.position.set(0, 1.8, 0.7); hole.rotation.y = Math.PI; g.add(hole);
-        const wood = mat(0x4a3a26);
-        [[-2, 1.9], [2, 1.9]].forEach(([x, y]) => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.8, 0.3), wood); p.position.set(x, y, 0.5); g.add(p); });
-        const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 0.35), wood); lintel.position.set(0, 3.8, 0.5); g.add(lintel);
+        // a heap of mossy boulders over the tunnel (+z, away from the swamp)
+        if (!model(g, 'minerocks', 30, 0, -0.4, 11.4, { fit: 'x' })) {
+          const rock = mat(0x3c3a36, { roughness: 0.95 });
+          const heap = new THREE.Mesh(new THREE.DodecahedronGeometry(9, 1), rock); heap.scale.set(1.5, 0.95, 1.1); heap.position.set(0, 2, 10); g.add(heap);
+          [[-7, 1, 6, 4], [7, 0.5, 7, 4.5], [0, 7, 9, 5]].forEach(([x, y, z, r]) => { const b = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rock); b.position.set(x, y, z); b.rotation.set(rnd() * 3, rnd() * 3, 0); g.add(b); });
+        }
+        const hole = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), new THREE.MeshBasicMaterial({ color: 0x000000 })); hole.position.set(0, 1.8, 0.8); hole.rotation.y = Math.PI; g.add(hole);
+        // the timbered mouth (its frame 0.5 m in, rails running into the dark)
+        if (!model(g, 'minemouth', 4.8, 0, 0, 1.6, { fit: 'x' }, Math.PI)) {
+          const wood = mat(0x4a3a26);
+          [[-2, 1.9], [2, 1.9]].forEach(([x, y]) => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.8, 0.3), wood); p.position.set(x, y, 0.5); g.add(p); });
+          const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 0.35), wood); lintel.position.set(0, 3.8, 0.5); g.add(lintel);
+        }
+        // the iron gate, hinged on its left post (the group's origin), swinging open when forced
         const gate = new THREE.Group(); gate.position.set(-1.8, 0, 0.2);
-        for (let i = 0; i < 5; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.2, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(0.3 + i * 0.75, 1.65, 0); gate.add(b); }
-        [0.7, 2.6].forEach(y => { const b = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.12, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(1.8, y, 0); gate.add(b); });
+        if (!model(gate, 'minegate', 3.57, 1.8, 0, 0, { fit: 'x' })) {
+          for (let i = 0; i < 5; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.2, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(0.3 + i * 0.75, 1.65, 0); gate.add(b); }
+          [0.7, 2.6].forEach(y => { const b = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.12, 0.12), mat(0x55504a, { metalness: 0.6, roughness: 0.5 })); b.position.set(1.8, y, 0); gate.add(b); });
+        }
         g.add(gate);
         g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g); props.lz = g; props.gate = gate;
         const back = l.clone().addScaledVector(ES.out, 11); colliders.push({ x: back.x, z: back.z, r: 9.5 });
+        const side = new V(ES.out.z, 0, -ES.out.x); // the boulders' wide flanks
+        [-1, 1].forEach(k => { const q = l.clone().addScaledVector(ES.out, 7).addScaledVector(side, k * 8.5); colliders.push({ x: q.x, z: q.z, r: 3.6 }); });
         props.esc = { kind: 2, act: ES.lz.clone().addScaledVector(ES.out, -1.5) }; // forced open from just in front of the gate
       }
     }

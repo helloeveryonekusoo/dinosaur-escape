@@ -34,10 +34,20 @@
   const THROWN = { flare: 19, meat: 14, cracker: 17, flash: 18, dyn: 15 };
 
   // items drawn with a CC0 model (js/props.js) when it has loaded: [model, size in metres]
-  const MODEL = { dart: ['rifle', 0.9], medkit: ['firstaid', 0.45], flash: ['grenade', 0.3] };
+  const MODEL = {
+    dart: ['rifle', 0.9], medkit: ['firstaid', 0.45], flash: ['grenade', 0.3],
+    flare: ['roadflare', 0.32], meat: ['meat', 0.45], camo: ['mudbucket', 0.32], adren: ['adren', 0.2], radar: ['tracker', 0.24],
+    cracker: ['cracker', 0.26], trap: ['beartrap', 0.62], hook: ['hook', 0.36], signal: ['flaregun', 0.27], stim: ['stim', 0.13], dyn: ['dynamite', 0.3]
+  };
   function mkMesh(type) {
     const md = MODEL[type], o = md && DG.PROPS && DG.PROPS.get(md[0], md[1]);
-    if (o) return o;
+    if (o) {
+      if (type === 'flare') { // the burning end: the white cap at +x
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffe0b0 }));
+        tip.position.set(md[1] / 2, 0.02, 0); tip.visible = false; o.add(tip); o.userData.tip = tip;
+      }
+      return o;
+    }
     const g = new THREE.Group();
     const std = (c, r, e) => new THREE.MeshStandardMaterial({ color: c, roughness: r, emissive: e || 0x000000 });
     if (type === 'flare') {
