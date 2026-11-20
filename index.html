@@ -64,6 +64,7 @@
   #inv .iname{position:absolute;bottom:54px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:12px;color:#ddd;text-shadow:0 1px 3px #000}
   #msg{position:absolute;top:32%;left:0;right:0;text-align:center;font-size:20px;letter-spacing:.2em;text-shadow:0 2px 8px #000;opacity:0;transition:opacity .6s}
   #vign{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(120,0,0,.85) 100%);opacity:0}
+  #fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
   #cross{position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:rgba(255,255,255,.6)}
   #status{position:absolute;left:24px;bottom:24px;font-size:12px;color:#bbb;line-height:1.8;text-shadow:0 1px 3px #000}
   #end{display:none;z-index:30;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
@@ -214,6 +215,7 @@
 </div>
 <div id="hud" class="layer">
   <div id="vign"></div>
+  <div id="fade"></div>
   <div id="goal">救難信号まで <b id="dist">---</b> m　<span id="rexn"></span></div>
   <div id="compass"></div>
   <div id="cross"></div>

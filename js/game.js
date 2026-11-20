@@ -106,7 +106,14 @@
     $('loading').style.display = 'none';
     bindUI(); toMenu();
     // debug helpers (used during development for screenshots)
-    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, SPEC, TREX, CO, keys, TI, coTest: ids => coTest(ids), coProp: (kind, i) => coProp(kind, i || 0), get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
+    DG._dbg = { renderer, camera, get world() { return world; }, newMap, beginGame, dinos, P, items, VS, SPEC, TREX, CO, keys, TI, coTest: ids => coTest(ids), coProp: (kind, i) => coProp(kind, i || 0),
+      // (testing, host: the first stalker steps up to player `slot` and catches them)
+      catchTest(slot) {
+        const p = VS.players[slot], a = TREX().find(x => x.d.root.visible) || TREX()[0]; if (!p || !a) return 'none';
+        const q = p.tp.pos, yaw = slot === VS.mySlot ? P.yaw : p.yaw;
+        a.d.root.visible = true; a.pos.set(q.x - Math.sin(yaw) * 4.4, 0, q.z - Math.cos(yaw) * 4.4); a.heading = yaw;
+        coCaught(a, p.tp, p); return 'caught ' + slot;
+      }, get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
         renderer.setPixelRatio(1); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -143,7 +150,8 @@
     const roar0 = d.roar.bind(d); d.roar = dur => { a.roarN++; return roar0(dur); };
     return a;
   }
-  const TREX = () => dinos.filter(a => a.s.key === 'trex'); // the race uses T-rexes only (every player has the same set)
+  // the race uses T-rexes only (every player has the same set); the co-op swamp has its own stalker (species.js spino)
+  const TREX = () => dinos.filter(a => a.s.key === (VS.mode === 'coop' && DG.SPECIES.spino && DG.SPECIES.spino._usesModel ? 'spino' : 'trex'));
 
   // A burning flare (light + noise) or meat (smell) draws nearby dinosaurs to a spot.
   // Both work even on a dinosaur that is chasing the player, unless the player is very close to it.
@@ -1033,7 +1041,7 @@
     if (VS.players[VS.mySlot]) VS.players[VS.mySlot].tp = LOCAL;
     // the hunters: the first DF.count start on the map, more arrive every DF.spawnEvery seconds (run by the host)
     const trex = TREX();
-    dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.feedT = 0; a.d.look = null; });
+    dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.catchSeen = undefined; a.feedT = 0; a.d.look = null; clearCatch(a); });
     roster = trex.slice(0, DF.max);
     if (VS.host) {
       // in the wedges between the three routes, at various distances from the signal, well away from every start
@@ -1141,7 +1149,7 @@
     const k = 1 - Math.exp(-dt * 12);
     VS.avatars.forEach(g => {
       const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
-      g.visible = (p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive()); // not in our own way when looking through their eyes
+      g.visible = !TREX().some(a => a.catch && a.catch.slot === p.slot) && (p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive()); // not in our own way when looking through their eyes
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
       const ghost = p.st === 'ghost', u = g.userData;
       g.position.y = ghost ? lerp(g.position.y, p.tp.pos.y - 1.65, k) + (u.mix ? Math.sin(performance.now() / 600 + u.slot) * 0.12 : 0) : Math.max(W.height(g.position.x, g.position.z), lerp(g.position.y, p.tp.pos.y - 1.65, k));
@@ -1169,7 +1177,7 @@
     TREX().forEach((a, k) => {
       if (!a.d.root.visible) return;
       const hunting = a.tgtP && (a.state === 'alert' || a.state === 'chase' || a.state === 'charge' || a.state === 'cool') ? a.tgtP.slot : -1;
-      d.push([k, +a.pos.x.toFixed(2), +a.pos.z.toFixed(2), +a.heading.toFixed(3), +a.speed.toFixed(2), Math.round(a.d.lunge * 100), a.tranq > 0 ? 1 : 0, a.roarN, a.biteN, hunting]);
+      d.push([k, +a.pos.x.toFixed(2), +a.pos.z.toFixed(2), +a.heading.toFixed(3), +a.speed.toFixed(2), Math.round(a.d.lunge * 100), a.tranq > 0 ? 1 : 0, a.roarN, a.biteN, hunting, a.catchN | 0, a.catchSlot == null ? -1 : a.catchSlot]);
     });
     const m = { t: 'snap', p, d, n: roster.filter(a => a.d.root.visible).length, sp: SPAWN_EVERY() && canSpawn() ? Math.ceil(spawnT) : -1 };
     if (COOP()) m.co = coState();
@@ -1188,6 +1196,8 @@
       a.netOn = true; a.nx = e[1]; a.nz = e[2]; a.nh = e[3]; a.ns = e[4]; a.nl = e[5] / 100; a.ntr = e[6]; a.hunting = e[9];
       if (a.roarSeen === undefined) { a.roarSeen = e[7]; a.biteSeen = e[8]; }
       a.nroar = e[7]; a.nbite = e[8];
+      if (a.catchSeen === undefined) a.catchSeen = e[10] | 0;
+      a.ncatch = e[10] | 0; a.ncatchSlot = e[11] == null ? -1 : e[11];
     });
     VS.nRex = m.n | 0; VS.spawnIn = m.sp | 0;
     if (m.co) coApply(m.co);
@@ -1205,6 +1215,7 @@
       a.d.look = a.hunting === VS.mySlot ? camera.position : a.hunting >= 0 && VS.players[a.hunting] ? VS.players[a.hunting].tp.pos : null;
       if (a.nroar !== a.roarSeen) { a.roarSeen = a.nroar; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.4 * a.ai.size + 0.3, 2.4); }
       if (a.nbite !== a.biteSeen) { a.biteSeen = a.nbite; if (a.d.oneShot) a.d.oneShot('bite'); }
+      if (a.ncatch !== a.catchSeen) { a.catchSeen = a.ncatch; if (catchInfo(a) && !(a.catch && a.catch.slot === a.ncatchSlot)) startCatch(a, a.ncatchSlot); }
       applyDino(a, dt);
     });
   }
@@ -1244,6 +1255,7 @@
     vsCheckEnd();
   }
   function localCaught(a) {
+    if (COOP() && catchInfo(a) && !(a.catch && a.catch.slot === VS.mySlot)) startCatch(a, VS.mySlot);
     VS.dead = { a, t: 0 }; state = 'dead'; shake = 0.25; if (document.pointerLockElement) document.exitPointerLock();
     $('pause').style.display = 'none';
     if (a) A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8);
@@ -1343,11 +1355,13 @@
       TREX().forEach(a => { if (a.d.root.visible && a.hunting === VS.mySlot) threat = Math.max(threat, 1 - a.pos.distanceTo(P.pos) / 45); });
     }
     updateAvatars(dt);
-    if (COOP()) coFx(dt);
+    if (COOP()) { coFx(dt); updateCatches(dt); }
     // camera when out of the race: the catch, then following whoever is still running
     if (VS.dead) {
       const D = VS.dead; D.t += dt;
-      if (D.t < 3 && D.a) {
+      const cat = COOP() && catchInfo(D.a) && D.a.catch;
+      if (cat && D.t < catchInfo(D.a).len) catchCam(D, dt);
+      else if (D.t < 3 && D.a && !catchInfo(D.a)) {
         const k0 = D.a, mp = k0.d.mouthPos(), S = k0.ai.size, kf = new V(Math.sin(k0.heading), 0, Math.cos(k0.heading));
         const want = mp.clone().addScaledVector(kf, 1.6 * S + 0.9 - Math.min(1, D.t * 0.5) * (0.9 * S)).add(new V(0, -0.25 * S, 0));
         want.y = Math.max(want.y, W.height(want.x, want.z) + 0.4);
@@ -1355,7 +1369,7 @@
         const m4 = new THREE.Matrix4().lookAt(camera.position, mp, new V(0, 1, 0)); camera.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(m4), 1 - Math.exp(-dt * 8));
         $('vign').style.opacity = Math.min(1, 0.5 + D.t * 0.4);
         if (D.t > 2.2 && D.t - dt <= 2.2 && !COOP()) msg('脱落… ほかのプレイヤーを観戦中', 4);
-      } else if (COOP()) coBecomeGhost(); else spectate(dt);
+      } else if (COOP()) { $('fade').style.opacity = 0; coBecomeGhost(); } else spectate(dt);
     } else if (me && (me.st === 'goal' || me.st === 'escaped')) spectate(dt);
     world.update(dt, T, VS.dead || (me && me.st !== 'alive') ? camera.position : P.pos);
     A.listener(camera.position, camera.getWorldDirection(cv0));
@@ -1796,7 +1810,7 @@
     world.props.caches.forEach(c => c.dim = false); world.setGate(0);
     // the stalkers: on the far side of the swamp from the camp (run by the host)
     const trex = TREX();
-    dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.feedT = 0; a.d.look = null; });
+    dinos.forEach(a => { a.d.root.visible = false; a.tgtP = null; a.netOn = false; a.roarSeen = undefined; a.biteSeen = undefined; a.catchSeen = undefined; a.feedT = 0; a.d.look = null; clearCatch(a); });
     roster = trex.slice(0, DF.max);
     if (VS.host) {
       const rnd = DG.N.rng(VS.seed + 11);
@@ -2210,11 +2224,86 @@
     p.st = 'ghost'; p.time = VS.raceT;
     coDropAll(p, tp.pos); // what they carried falls where it happened
     a.attackT = -1; a.feedT = 6; a.state = 'wander'; a.aware = 0.3; a.timer = 6; a.tgtP = null; a.home.copy(a.pos);
-    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8); a.d.roar(2.2);
+    const cat = catchInfo(a);
+    if (cat) { // it seizes them, shakes them, dashes them down in front of itself, roars down at them and kills them
+      a.heading = Math.atan2(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z); a.feedT = a.timer = cat.len + 0.5;
+      a.catchN = (a.catchN || 0) + 1; startCatch(a, p.slot);
+    } else { A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8); a.d.roar(2.2); }
     if (tp.local) localCaught(a); else if (p.id) DG.Net.send({ t: 'caught', k: TREX().indexOf(a) }, p.id);
     VS.players.forEach(o => { if (o && o !== p && o.st !== 'gone') tell(o.tp, `💀 ${p.name} が沼の捕食者に捕まった…`, 3); });
     CO.dir.lull = 15; CO.dir.chase = 0;
     if (!coAlive().length) coEnd();
+  }
+  // ---- the catch (a stalker whose model has a 'catch' clip): played the same on every screen ----
+  // The caught player watches it from inside: the jaws coming, thrown about in them, a blackout as they are dashed
+  // down, then on their back looking up as it roars down into their face, and the last bite. Everyone else sees the
+  // stalker with the body in its jaws, then lying in front of it.
+  const catchInfo = a => (a && a.d.C && a.d.C.catch && a.s.model && a.s.model.catch) || null;
+  const CQ_SIDE = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new V(0, -1, 0), new V(0, 0, 1), new V(-1, 0, 0))); // look along the head's side
+  const cq0 = new THREE.Quaternion(), cq1 = new THREE.Quaternion(), cm4 = new THREE.Matrix4(), cv1 = new V(), cv2 = new V();
+  function clearCatch(a) {
+    if (a.catch && a.catch.body) { world.scene.remove(a.catch.body); disposeTree(a.catch.body); }
+    a.catch = null; a.catchN = 0; a.catchSlot = -1;
+  }
+  function startCatch(a, slot) {
+    if (a.catch && a.catch.body) { world.scene.remove(a.catch.body); disposeTree(a.catch.body); }
+    a.catch = { t: 0, slot, spot: null, fx: {} }; a.catchSlot = slot; a.d.lunge = 0; a.speed = 0;
+    a.d.oneShot('catch');
+  }
+  function updateCatches(dt) {
+    TREX().forEach(a => {
+      const C = a.catch; if (!C) return;
+      const c = catchInfo(a); if (!c) { a.catch = null; return; }
+      C.t += dt; a.d.lunge = 0;
+      const jp = a.d.jawPoint(cv1), once = (k, t) => { if (C.t >= t && !C.fx[k]) { C.fx[k] = 1; return true; } return false; };
+      if (once('grab', c.grab)) A.roar(jp, a.ai.roarPitch * 1.7, 1.3, 0.7);
+      if (once('drop', c.release)) { C.spot = jp.clone(); C.spot.y = gy(C.spot); A.step(C.spot, 2.4); }
+      if (once('roar', c.roar)) A.roar(a.d.headPos(), a.ai.roarPitch, 2.4, 2.8);
+      if (once('kill', c.kill)) A.roar(jp, a.ai.roarPitch * 1.5, 1.4, 0.6);
+      // the body, for everyone but the one it happened to (who sees it all from inside)
+      const mine = C.slot === VS.mySlot;
+      if (!mine && !C.body) { C.body = hurtFigure(); if (C.body) world.scene.add(C.body); }
+      const B = C.body;
+      if (B) {
+        B.visible = C.t >= c.grab;
+        if (C.t < c.release || C.t >= c.kill) { // across the jaws
+          a.d.head.getWorldQuaternion(cq0); B.position.copy(jp).y -= 0.25;
+          B.quaternion.copy(cq0).multiply(cq1.setFromAxisAngle(new V(0, 1, 0), Math.PI / 2));
+        } else if (C.spot) { B.position.copy(C.spot); B.quaternion.setFromAxisAngle(new V(0, 1, 0), a.heading + Math.PI / 2); }
+      }
+      if (C.t >= c.len) { if (B) { world.scene.remove(B); disposeTree(B); } a.catch = null; }
+    });
+  }
+  // the caught player's own camera through it all (VS.dead.t = time since the catch began)
+  function catchCam(D, dt) {
+    const a = D.a, c = catchInfo(a), C = a.catch, t = D.t, d = a.d, jp = d.jawPoint(cv1);
+    const look = (p, k, roll) => {
+      cm4.lookAt(camera.position, p, new V(0, 1, 0)); cq0.setFromRotationMatrix(cm4);
+      if (roll) cq0.multiply(cq1.setFromAxisAngle(new V(0, 0, 1), roll));
+      camera.quaternion.slerp(cq0, 1 - Math.exp(-dt * k));
+    };
+    let shk = 0;
+    if (t < c.grab) { camera.position.lerp(P.pos, 1 - Math.exp(-dt * 6)); look(jp, 10); shk = 0.02; }   // the jaws come at you
+    else if (t < c.release) {                                                                          // thrown about in them
+      // just outside the jaws on one side, looking out past the teeth as the head throws you about
+      d.head.getWorldQuaternion(cq0);
+      const sd = cv2.set(1, 0, 0).applyQuaternion(cq0), fw = new V(0, 1, 0).applyQuaternion(cq0), up = new V(0, 0, 1).applyQuaternion(cq0);
+      camera.position.copy(jp).addScaledVector(sd, 0.85).addScaledVector(up, 0.15);
+      cm4.lookAt(camera.position, cv1.copy(jp).addScaledVector(sd, 6).addScaledVector(fw, 2.5), up); camera.quaternion.setFromRotationMatrix(cm4);
+      shk = 0.06;
+    } else {                                                                                           // on your back in front of it
+      if (!D.spot) { D.spot = (C && C.spot ? C.spot.clone() : jp.clone()); D.spot.y = gy(D.spot) + 0.3; }
+      camera.position.copy(D.spot);
+      if (t < c.lookUp[0]) look(cv2.set(a.pos.x, a.pos.y + 2.2, a.pos.z), 3, 0.35);                  // dazed: its legs, its chest
+      else look(jp, t < c.lookUp[1] ? 4 : 9);                                                           // looking up as it brings its head down
+      shk = t > c.roar && t < c.kill ? 0.05 * (1 - (t - c.roar) / (c.kill - c.roar)) + 0.015 : 0.005;
+    }
+    camera.position.x += (Math.random() - 0.5) * shk; camera.position.y += (Math.random() - 0.5) * shk; camera.position.z += (Math.random() - 0.5) * shk;
+    const b0 = c.blackout[0], b1 = c.blackout[1];
+    let black = t < b0 ? 0 : t < b0 + 0.25 ? (t - b0) / 0.25 : t < b1 - 0.5 ? 1 : t < b1 ? (b1 - t) / 0.5 : 0;
+    if (t > c.kill - 0.12) black = Math.max(black, Math.min(1, (t - (c.kill - 0.12)) / 0.18));
+    $('fade').style.opacity = black;
+    $('vign').style.opacity = Math.min(1, 0.55 + (t > c.roar ? 0.35 : 0));
   }
   function coEnd() {
     if (!VS.host || VS.phase === 'end') return;
@@ -2267,11 +2356,13 @@
     // flashlights
     if (CO.lights) VS.players.forEach(p => {
       if (!p) return; const l = CO.lights[p.slot]; if (!l) return;
-      const mine = p.slot === VS.mySlot, on = p.st === 'alive' && (mine ? CO.light : !!p.fl) && ev !== 'blackout';
+      const mine = p.slot === VS.mySlot, caught = mine && VS.dead && VS.dead.a && VS.dead.a.catch; // (caught: the light still in your hand)
+      const on = caught || (p.st === 'alive' && (mine ? CO.light : !!p.fl) && ev !== 'blackout');
       if (!on) { l.intensity = 0; return; }
       const pos = mine ? camera.position : p.tp.pos, yaw = mine ? P.yaw : p.yaw, pitch = mine ? P.pitch : (p.pitch || 0);
       l.position.set(pos.x + Math.cos(yaw) * 0.22, pos.y - 0.28, pos.z - Math.sin(yaw) * 0.22);
       coV.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+      if (caught) { camera.getWorldDirection(coV); l.position.copy(camera.position).y -= 0.15; }
       l.target.position.copy(l.position).addScaledVector(coV, 10); l.target.updateMatrixWorld();
       let k = 1;
       if (mine && near < 38 && Math.random() < (1 - near / 38) * 0.3) k = Math.random() * 0.25; // it's close: the light falters

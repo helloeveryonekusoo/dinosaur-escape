@@ -127,9 +127,28 @@
       ai: { type: 'sprinter', walk: 2.4, run: 11.5, accel: 4, turn: 0.55, sight: 70, hear: 50, attack: 3.0, roarPitch: 0.9, count: 1, size: 0.75 }
     }
   };
+  // The co-op swamp stalker: an original spinosaurid made in Blender for this game (models/spino/spino.glb, with
+  // its own clips: idle, walk, run, roar, roar_low, bite and the catch). It hunts like the T-rex but only the co-op
+  // mode uses it (no spawnEvery, so the single-player levels never pick it).
+  DG.SPECIES.spino = Object.assign({}, DG.SPECIES.trex, {
+    key: 'spino', name: '沼の捕食者', sci: 'Spinosauridae indet.', coop: true,
+    desc: '夜の湿地に潜む、帆を持つ大型の獣脚類。泥にまみれた裂けた帆と、左右に大きく開く下あごを持つ。獲物をくわえて振り回し、地面に叩きつけてから、上から吠えかかる。',
+    stats: '全長 約13m ／ 腰高 約3.6m ／ 最高速度 約27km/h',
+    model: {
+      file: 'models/spino/spino.glb', local: true, title: 'このゲームのために Blender で制作したオリジナルモデル',
+      walkSpeed: 1.5, runSpeed: 6.6, lengthScale: 1.0376,                 // (the clips' own speeds; real size, 13.2 m)
+      clips: { idle: 'idle', walk: 'walk', run: 'run', roar: 'roar', bite: 'bite', catch: 'catch', roar_low: 'roar_low' },
+      mouth: [0, 0.813, -0.476],                                        // between the jaws, in the head bone's own space
+      catch: { len: 204 / 24, grab: 14 / 24, release: 77 / 24, blackout: [70 / 24, 100 / 24], lookUp: [116 / 24, 128 / 24], roar: 132 / 24, kill: 190 / 24 },
+      // no texture files: the hide is drawn by the shader in gltf_dino.js (colours are sRGB hex); `_mouth` marks the mouth
+      hide: { match: /skin/, back: 0x2b2621, flank: 0x3f372e, belly: 0x51483a, band: 0x1b1814, mouth: 0x5e1a18, freq: 44, plateFreq: 10, bandFreq: 2.0, relief: 0.005 }
+    },
+    ai: Object.assign({}, DG.SPECIES.trex.ai, { maxCount: 3, roarPitch: 0.5, spawnEvery: 0 })
+  });
   DG.ALL_SPECIES = ['trex', 'utah', 'trike', 'carno'];
   // 現在はティラノサウルスだけのモード。全種に戻すときは DG.SPECIES_ORDER = DG.ALL_SPECIES にする
-  DG.SPECIES_ORDER = ['trex'];
+  // (spino: the co-op mode's stalker, loaded alongside; shown in the title screen's book too)
+  DG.SPECIES_ORDER = ['trex', 'spino'];
 
   // A second hunter that only exists where its model file does. models/local/ is not published, so on the public
   // page this species is never loaded. `optional` is the ?model=<name> value that switches it on (game.js remembers it);

@@ -101,6 +101,7 @@
 ## クレジット
 
 - ティラノサウルスの3Dモデル: [“Animated Tyrannosaurus Rex Dinosaur Running Loop”](https://sketchfab.com/3d-models/38007d947ae74dea83988cb0b08ee053) by LasquetiSpice — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- 協力モードの沼の捕食者（`models/spino/spino.glb`）: このゲームのために Blender で制作したオリジナルの棘竜類モデル。動き（待機・歩く・走る・咆哮・前屈み咆哮・噛みつき・捕食）も Blender で付けたものです
 - オンラインで見える仲間・幽霊の人物モデル（`models/human/survivor.glb`）: [MPFB](https://static.makehumancommunity.org/mpfb.html)（MakeHuman）で作成。体・肌・目・髪・服は MakeHuman の [CC0](https://static.makehumancommunity.org/about/license.html) アセット。動き（待機・歩く・走る・しゃがむ・漂う・倒れる・横たわる）は Blender で付けたものです
 - 協力モードの小物（無線機・研究ノート・軍用の木箱・燃料缶・石のたき火台・シャッター扉・配管・桟橋・ドラム缶・ライフル・救急箱・手榴弾・発電機・配電盤・ブイ）の3Dモデル: [Poly Haven](https://polyhaven.com/models) — [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)（テクスチャを縮小し、一部を組み合わせて `models/props/` に収録）
 - 描画: [three.js](https://threejs.org/)（MIT License）

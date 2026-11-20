@@ -173,6 +173,7 @@
       const plain = clips.find(c => !Object.values(KEYS).some(re => re.test(c.name)));
       C.walk = C.walk || C.run || plain || clips[0]; C.run = C.run || C.walk;
       if (!C.roar) C.roar = C.bite; if (!C.bite) C.bite = C.roar;
+      for (const k in named) if (!C[k]) C[k] = clips.find(c => c.name === named[k]);   // extra one-shots (catch, roar_low)
       this.C = C; this.A = {};
       const loco = ['idle', 'walk', 'run'].filter(k => C[k]);
       const seen = new Map();
@@ -196,6 +197,7 @@
     roar(dur) { this.roarT = dur || 2.2; this.oneShot('roar'); }
     oneShot(k) {
       const clip = this.C[k]; if (!clip || this.A.walk && this.A.walk.getClip() === clip) return;
+      if (this.os && this.os.k === 'catch' && k !== 'catch') return;      // nothing cuts into the catch
       if (this.os) this.os.a.stop();
       const r = this.range(k), a = this.mixer.clipAction(clip);
       a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = r[0]; a.play();
@@ -207,6 +209,13 @@
       out = out || new V();
       if (this.head) return this.head.getWorldPosition(out);
       return out.set(0, this.height * 0.8, this.len * 0.4).applyMatrix4(this.root.matrixWorld);
+    }
+    // the point between the jaws (cfg.mouth: given in the head bone's own space), else the snout tip below
+    jawPoint(out) {
+      out = out || new V(); const m = this.spec.model.mouth;
+      if (!m || !this.head) return this.mouthPos(out);
+      this.root.updateMatrixWorld(true);
+      return this.head.localToWorld(out.set(m[0], m[1], m[2]));
     }
     // snout tip: the model is centred with its head toward +Z, so the snout is near z = +len/2
     mouthPos(out) {
