@@ -3,6 +3,10 @@
   const DG = window.DG, V = THREE.Vector3;
   const clamp = (x, a, b) => Math.max(a, Math.min(b, x)), lerp = (a, b, t) => a + (b - a) * t;
   const tq1 = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), qy = new THREE.Quaternion(), tv = new V(), UP = new V(0, 1, 0);
+  const jv = new V(), pv = new V(), ax = new V();
+  const av0 = new V(), av1 = new V(), av2 = new V(), av3 = new V(), av4 = new V(), av5 = new V(), av6 = new V(), av7 = new V();
+  const aq0 = new THREE.Quaternion(), aq1 = new THREE.Quaternion(), aq2 = new THREE.Quaternion(), aq3 = new THREE.Quaternion(), am4 = new THREE.Matrix4();
+  const smoothK = k => k * k * (3 - 2 * k);
   const KEYS = { idle: /idle|wait|stand|breath|look/i, walk: /walk/i, run: /run|sprint|gallop|charge|jog/i, roar: /roar|call|scream|growl|howl/i, bite: /bite|attack|snap/i };
 
   // three.js dropped KHR_materials_pbrSpecularGlossiness; map it onto MeshStandardMaterial:
@@ -147,6 +151,23 @@
       const find = re => bones.find(b => re.test(b.name));
       this.head = find(/head/i) || find(/skull/i) || null;
       this.neck = find(/neck/i) || null;
+      // points on the lower jaw (in its bones' own space, from the bind pose), to keep it out of the ground
+      this.jawPts = [];
+      scene.traverse(m => {
+        if (!m.isSkinnedMesh) return;
+        const sk = m.skeleton, ji = sk.bones.map((b, i) => /jaw/i.test(b.name) ? i : -1).filter(i => i >= 0); if (!ji.length) return;
+        const P = m.geometry.attributes.position, SI = m.geometry.attributes.skinIndex, SW = m.geometry.attributes.skinWeight;
+        const step = Math.max(1, Math.round(P.count / 3000)), mine = [];
+        for (let i = 0; i < P.count; i += step) for (let k = 0; k < 4; k++) {
+          if (SW.getComponent(i, k) > 0.6 && ji.includes(SI.getComponent(i, k))) { mine.push([i, SI.getComponent(i, k)]); break; }
+        }
+        const every = Math.max(1, Math.floor(mine.length / 60));
+        for (let j = 0; j < mine.length; j += every) {
+          const [i, b] = mine[j];
+          const p = new V().fromBufferAttribute(P, i).applyMatrix4(m.bindMatrix).applyMatrix4(sk.boneInverses[b]);
+          this.jawPts.push({ b: sk.bones[b], p });
+        }
+      });
 
       // --- orientation and scale: head should point +Z, length should match the species ---
       scene.updateMatrixWorld(true);
@@ -175,12 +196,21 @@
       if (!C.roar) C.roar = C.bite; if (!C.bite) C.bite = C.roar;
       for (const k in named) if (!C[k]) C[k] = clips.find(c => c.name === named[k]);   // extra one-shots (catch, roar_low)
       this.C = C; this.A = {};
+      // a catch made on the run: the legs and tail keep the run cycle (slowing down) while the neck, head, jaws and
+      // arms already make the catch; the legs take over the catch's own stance once it has come to a stop
+      const LOW = /^(root|hips|thigh|shin|foot|toe|sickle|tail)/;
+      const part = (clip, low) => new THREE.AnimationClip(clip.name + (low ? '_low' : '_up'), clip.duration, clip.tracks.filter(t => LOW.test(t.name.split('.')[0]) === low));
+      if (C.catch && C.run) this.split = { runLow: part(C.run, true), catchUp: part(C.catch, false), catchLow: part(C.catch, true) };
       const loco = ['idle', 'walk', 'run'].filter(k => C[k]);
       const seen = new Map();
       loco.forEach(k => {
         if (seen.has(C[k])) { this.A[k] = seen.get(C[k]); return; }
         const a = this.mixer.clipAction(C[k]); a.play(); a.setEffectiveWeight(0); this.A[k] = a; seen.set(C[k], a);
       });
+      // the neck bones from its base (for aimAt's correction)
+      const depth = b => { let n = 0; for (let o = b; o.parent; o = o.parent) n++; return n; };
+      this.chain = bones.filter(b => /^neck_?\d/i.test(b.name)).sort((a, b) => depth(a) - depth(b));
+      this.aim = null;
       this.walkRef = cfg.walkSpeed || spec.gait.walk; this.runRef = cfg.runSpeed || spec.ai.run * 0.85;
       // with only a run cycle, moving slower than this makes the feet visibly slide
       this.minSpeed = this.A.walk === this.A.run ? this.runRef * 0.3 : 0;
@@ -195,14 +225,31 @@
       return rg ? [rg[0], Math.min(rg[1], clip.duration)] : [0, clip.duration];
     }
     roar(dur) { this.roarT = dur || 2.2; this.oneShot('roar'); }
-    oneShot(k) {
+    stopOs() { const o = this.os; if (!o) return; o.a.stop(); if (o.lo) { o.lo.stop(); o.rl.stop(); } this.os = null; }
+    // moving: a catch started at speed (see `split`); from: start that many seconds into the clip (blended in quickly)
+    oneShot(k, moving, from) {
       const clip = this.C[k]; if (!clip || this.A.walk && this.A.walk.getClip() === clip) return;
       if (this.os && this.os.k === 'catch' && k !== 'catch') return;      // nothing cuts into the catch
-      if (this.os) this.os.a.stop();
-      const r = this.range(k), a = this.mixer.clipAction(clip);
-      a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = r[0]; a.play();
-      this.os = { a, t: 0, dur: r[1] - r[0], k };
+      this.stopOs(); from = from || 0;
+      const r = this.range(k), once = c => { const a = this.mixer.clipAction(c); a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = r[0] + from; a.play(); a.setEffectiveWeight(0); return a; };
+      const fade = from ? 0.12 : 0.2;
+      if (k === 'catch' && moving && this.split) {
+        const S = this.split, rl = this.mixer.clipAction(S.runLow);
+        rl.reset(); rl.play(); rl.time = this.A.run ? this.A.run.time : 0; rl.setEffectiveWeight(0);
+        this.os = { a: once(S.catchUp), lo: once(S.catchLow), rl, t: from, age: 0, fade, dur: r[1] - r[0], k };
+        return;
+      }
+      this.os = { a: once(clip), t: from, age: 0, fade, dur: r[1] - r[0], k };
     }
+    // A small correction on top of an animated reach (the catch): the neck bent so the middle of the jaws comes onto
+    // `p` (world), by `w` (0 = the animation as it is ... 1 = right on it); the head keeps its animated turn. Called
+    // every frame while it lasts; aimRelease() eases the neck back to the animation.
+    aimAt(p, w) {
+      if (!this.chain.length || !this.head) return;
+      if (!this.aim) this.aim = { T: p.clone(), goal: new V(), w: 0, wSet: 0, on: true };
+      this.aim.on = true; this.aim.goal.copy(p); this.aim.wSet = w;
+    }
+    aimRelease() { if (this.aim) this.aim.on = false; }
     // true while the roar animation has taken over the body: the legs are planted, so the AI must not move it
     get roaring() { return !!(this.os && this.os.k === 'roar'); }
     headPos(out) {
@@ -211,11 +258,20 @@
       return out.set(0, this.height * 0.8, this.len * 0.4).applyMatrix4(this.root.matrixWorld);
     }
     // the point between the jaws (cfg.mouth: given in the head bone's own space), else the snout tip below
-    jawPoint(out) {
-      out = out || new V(); const m = this.spec.model.mouth;
+    // tip: the front of the jaws instead (spec.model.catch.tip)
+    jawPoint(out, tip) {
+      out = out || new V(); const c = this.spec.model.catch, m = tip && c && c.tip || this.spec.model.mouth;
       if (!m || !this.head) return this.mouthPos(out);
       this.root.updateMatrixWorld(true);
       return this.head.localToWorld(out.set(m[0], m[1], m[2]));
+    }
+    // where a body held in the jaws has its middle: where the teeth meet (catch.hold), or with front, at the front of
+    // the jaws (catch.tip) — measured on the model (head bone space)
+    holdPoint(out, front) {
+      const c = this.spec.model.catch, m = c && (front ? c.tip : c.hold);
+      if (!m || !this.head) return this.jawPoint(out, front);
+      this.root.updateMatrixWorld(true);
+      return this.head.localToWorld((out || new V()).set(m[0], m[1], m[2]));
     }
     // snout tip: the model is centred with its head toward +Z, so the snout is near z = +len/2
     mouthPos(out) {
@@ -228,15 +284,20 @@
       this.t += dt;
       this.speed = lerp(this.speed, speed, 1 - Math.exp(-dt * 6)); this.turn = lerp(this.turn, turn, 1 - Math.exp(-dt * 4));
       if (this.roarT > 0) this.roarT -= dt;
-      if (this.lunge > 0.05 && !this.biting) { this.biting = true; this.oneShot('bite'); }
+      if (this.lunge > 0.05 && !this.biting) { this.biting = true; if (!this.aim) this.oneShot('bite'); }
       if (this.lunge <= 0.01) this.biting = false;
       // one-shot envelope (roar / bite) takes over from locomotion
       let ow = 0;
       if (this.os) {
-        const o = this.os; o.t += dt;
-        ow = clamp(Math.min(o.t / 0.2, (o.dur - o.t) / 0.3), 0, 1);
+        const o = this.os, rate = o.rate || 1; o.t += dt * rate; o.age += dt;
+        o.a.timeScale = rate;
+        ow = clamp(Math.min(o.age / o.fade, (o.dur - o.t) / 0.3), 0, 1);
         o.a.setEffectiveWeight(ow);
-        if (o.t >= o.dur) { o.a.stop(); this.os = null; ow = 0; }
+        if (o.lo) { // legs: the run cycle while still moving, the catch's stance once slowed to a walk
+          const legs = clamp((2.6 - this.speed) / 2.0, 0, 1);
+          o.lo.setEffectiveWeight(ow * legs); o.rl.setEffectiveWeight(ow * (1 - legs)); o.rl.timeScale = Math.max(0.5, this.speed / this.runRef);
+        }
+        if (o.t >= o.dur) { this.stopOs(); ow = 0; }
       }
       const sp = this.speed, A = this.A;
       const wMove = A.idle ? clamp(sp / 0.6, 0, 1) : 1;
@@ -267,6 +328,57 @@
         bone.parent.getWorldQuaternion(tq1); bone.getWorldQuaternion(tq2);
         qy.setFromAxisAngle(UP, this.lookYaw); tq2.premultiply(qy);
         bone.quaternion.copy(tq1.invert().multiply(tq2));
+      }
+      if (this.aim) this.applyAim(dt);
+      // a roar or catch with the head down where the ground rises ahead of the feet: lift the neck from its base
+      // just enough that the lower jaw stays above the ground
+      if ((this.os || this.aim) && this.neck && this.jawPts.length) this.keepJawUp();
+    }
+    applyAim(dt) {
+      const A = this.aim, on = A.on, ch = this.chain, H = this.head;
+      A.w = on ? clamp(A.wSet, 0, 1) : Math.max(0, A.w - dt / 0.3); // (eased back to the animation once let go)
+      if (!on && A.w <= 0) { this.aim = null; return; }
+      if (on) A.T.copy(A.goal);
+      const w = smoothK(A.w), clipQ = ch.map(b => b.quaternion.clone()), clipH = H.quaternion.clone();
+      if (w > 0) {
+        this.root.updateMatrixWorld(true);
+        // the head keeps the animation's own turn and tilt; only where it is changes
+        H.getWorldQuaternion(aq0);
+        // the point of the head to bring onto the target: the middle of the open jaws
+        const c = this.spec.model.catch, hp = av5.fromArray(c.hold).lerp(av3.fromArray(c.tip), 0.45), T = A.T;
+        const s = H.getWorldScale(av3).x, want = av7.copy(hp).multiplyScalar(s).applyQuaternion(aq0).negate().add(T);
+        // the neck bent to put the head there (cyclic coordinate descent, a little at a time per bone)
+        for (let it = 0; it < 6; it++) for (let i = ch.length - 1; i >= 0; i--) {
+          const b = ch[i]; b.updateWorldMatrix(true, true);
+          const bp = b.getWorldPosition(av5), from = H.getWorldPosition(av6).sub(bp), to = av4.copy(want).sub(bp);
+          if (from.lengthSq() < 1e-6 || to.lengthSq() < 1e-6) continue;
+          aq1.setFromUnitVectors(from.normalize(), to.normalize());
+          const ang = 2 * Math.acos(clamp(aq1.w, -1, 1)); if (ang > 0.2) aq1.slerp(aq2.identity(), 1 - 0.2 / ang);
+          b.getWorldQuaternion(aq2).premultiply(aq1); b.parent.getWorldQuaternion(aq3);
+          b.quaternion.copy(aq3.invert().multiply(aq2));
+        }
+        H.updateWorldMatrix(true, false); H.parent.getWorldQuaternion(aq3); H.quaternion.copy(aq3.invert().multiply(aq0));
+        ch.forEach((b, i) => { aq1.copy(b.quaternion); b.quaternion.copy(clipQ[i]).slerp(aq1, w); });
+        aq1.copy(H.quaternion); H.quaternion.copy(clipH).slerp(aq1, w);
+      }
+    }
+    keepJawUp() {
+      const CLEAR = 0.06, piv = this.neck;
+      for (let it = 0; it < 2; it++) {
+        this.root.updateMatrixWorld(true);
+        let low = Infinity;
+        for (const j of this.jawPts) {
+          tv.copy(j.p).applyMatrix4(j.b.matrixWorld);
+          const c = tv.y - this.ground(tv.x, tv.z);
+          if (c < low) { low = c; jv.copy(tv); }
+        }
+        const need = CLEAR - low; if (need <= 0.005) return;
+        piv.getWorldPosition(pv); jv.sub(pv);
+        const h = Math.hypot(jv.x, jv.z); if (h < 0.5) return;
+        ax.crossVectors(jv, UP).normalize();             // turning about this raises the jaw
+        piv.parent.getWorldQuaternion(tq1); piv.getWorldQuaternion(tq2);
+        qy.setFromAxisAngle(ax, Math.min(0.5, need / h)); tq2.premultiply(qy);
+        piv.quaternion.copy(tq1.invert().multiply(tq2));
       }
     }
   }

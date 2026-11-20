@@ -85,6 +85,7 @@
     } catch (e) { }
     for (const key in DG.SPECIES) if (DG.SPECIES[key].optional && DG.SPECIES[key].optional === modelAlt && !DG.SPECIES_ORDER.includes(key)) DG.SPECIES_ORDER.push(key);
     let k = 0;
+    DG.SPECIES_ORDER.forEach(key => { const v = DG.SPECIES[key].voice; if (v) A.loadVoices(v.roar.concat(v.short || [])); }); // recorded roars, fetched alongside
     for (const key of DG.SPECIES_ORDER.slice()) {
       const s = DG.SPECIES[key];
       setLoad(0.3 + 0.6 * k / DG.SPECIES_ORDER.length, s.name + (s.model ? ' の3Dモデルを読み込み中' : ' の皮膚と骨格を生成中')); await frame();
@@ -113,6 +114,12 @@
         const q = p.tp.pos, yaw = slot === VS.mySlot ? P.yaw : p.yaw;
         a.d.root.visible = true; a.pos.set(q.x - Math.sin(yaw) * 4.4, 0, q.z - Math.cos(yaw) * 4.4); a.heading = yaw;
         coCaught(a, p.tp, p); return 'caught ' + slot;
+      },
+      // (testing: a co-op night hosted alone, offline -- seat 1 is an empty seat)
+      async coSolo(diff) {
+        VS.mode = 'coop'; VS.host = true; VS.mySlot = 0; VS.diff = vsDiffKey(diff || 'hard');
+        VS.players = [mkPlayer(0, null, 'test'), mkPlayer(1, null, 'empty')];
+        await vsPrepare((Math.random() * 1e6) | 0, vsList()); vsGo(); return 'ok';
       }, get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
       shot(name, w, h) {
         const ow = innerWidth, oh = innerHeight; w = w || 1280; h = h || 720;
@@ -200,7 +207,7 @@
     if (VS.on && COOP()) coDartHit();
     a.tranq = 25; a.aware = Math.max(a.aware, 1.2); a.lastSeen.copy(shooter.pos); a.lost = 0; a.tgtP = shooter;
     if (a.state !== 'chase') { a.state = 'alert'; a.timer = 0.5; }
-    a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.15, 1.3, 2.0);
+    a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.15, 1.3, 2.0, a.s);
   }
 
   // ---------------- UI ----------------
@@ -410,7 +417,7 @@
       activateDino(a, p, Math.atan2(P.pos.x - p.x, P.pos.z - p.z), true);
       a.home.lerp(P.pos, 0.25);
       const n = dinos.filter(x => x.d.root.visible).length;
-      A.roar(new V(p.x, W.height(p.x, p.z) + 4, p.z), a.ai.roarPitch, 2.2, 2.6);
+      A.roar(new V(p.x, W.height(p.x, p.z) + 4, p.z), a.ai.roarPitch, 2.2, 2.6, a.s, null); // (heard, not seen: at once)
       msg(`🦖 森の奥で新たな咆哮が響いた…（${hunterName()} ${n}頭）`, 3);
       return;
     }
@@ -564,7 +571,21 @@
   function updateDino(a, dt, playing, list) {
     const ai = a.ai, d = a.d;
     if (a.feedT > 0) { // just caught a runner in a race: stands over its catch for a while
-      a.feedT -= dt; a.speed = lerp(a.speed, 0, 1 - Math.exp(-dt * 6)); a.turnRate = 0; a.attackT = -1;
+      a.feedT -= dt; a.turnRate = 0; a.attackT = -1;
+      if (a.catch) { // the catch was made on the run: it carries on forward, slowing to a stop over a couple of seconds
+        const C = a.catch, c = catchInfo(a);
+        if (C.run && c && c.run && c.run.vel) {
+          // the catch clip runs on its own legs: moved at the speed they run at; steered a little onto the runner
+          // until the jaws close (the neck makes up the rest)
+          a.speed = clipVel(c.run.vel, C.t) * (C.rate || C.k);
+          const vt = C.gT == null && victim(C.slot);
+          if (vt) a.heading = wrapA(a.heading + clamp(wrapA(Math.atan2(vt.pos.x - a.pos.x, vt.pos.z - a.pos.z) - Math.atan2(c.run.jaw[0], c.run.jaw[2]) - a.heading), -0.5 * dt, 0.5 * dt));
+        } else a.speed = lerp(a.speed, 0, 1 - Math.exp(-dt * 0.9));
+        const ox = a.pos.x, oz = a.pos.z;
+        a.pos.x += Math.sin(a.heading) * a.speed * dt; a.pos.z += Math.cos(a.heading) * a.speed * dt;
+        world.collide(a.pos, 0.5 * ai.size + 0.2, Infinity, 0.45 * ai.size);
+        const q = W.ravineAt(a.pos.x, a.pos.z); if (q && q.depth > 0.6) { a.pos.x = ox; a.pos.z = oz; a.speed = 0; }
+      } else a.speed = lerp(a.speed, 0, 1 - Math.exp(-dt * 6));
       d.lunge = Math.max(0, d.lunge - dt); applyDino(a, dt); return;
     }
     if (a.stun > 0) { // caught in a trap or knocked senseless: stands there, thrashing
@@ -600,7 +621,7 @@
         a.state = ai.type === 'charger' ? 'charge' : 'chase'; a.timer = 0;
         if (ai.type === 'charger') { a.chargeDir = angP; a.timer = 4.5; }
         if (ai.type === 'hunter' || ai.type === 'charger' || !a.roared) {
-          d.roar(2.2); A.roar(d.headPos(), ai.roarPitch, 1.4 * ai.size + 0.3, 2.4); a.roarHold = Math.max(ai.type === 'hunter' ? 1.6 : 0.6, (d.roarDuration || 0) * 0.85); a.roared = true;
+          d.roar(2.2); A.roar(d.headPos(), ai.roarPitch, 1.4 * ai.size + 0.3, 2.4, a.s); a.roarHold = Math.max(ai.type === 'hunter' ? 1.6 : 0.6, (d.roarDuration || 0) * 0.85); a.roared = true;
           tell(TP, a.s.name + 'に気付かれた！', 2.5);
           if (ai.type === 'pack') dinos.forEach(o => { if (o !== a && o.ai.type === 'pack') { o.aware = 1.2; o.state = 'chase'; o.lastSeen.copy(TP.pos); } });
         }
@@ -618,6 +639,9 @@
         if (a.lost > DF.lose || (a.lost > 2 && a.pos.distanceTo(a.lastSeen) < 4)) { a.state = 'wander'; a.aware = 0.3; a.home.copy(a.pos); a.timer = 0; tell(TP, '振り切った…', 2); }
       }
       if (playing && dist < ai.attack + 1.2 && rel < 0.7 && a.attackT < 0) a.attackT = 0;
+      // a stalker whose catch is made on the run starts it when its jaws, reaching out as it runs on, will come down
+      // on where the runner is going to be
+      if (playing && list && !(a.roarHold > 0) && a.speed > 4 && runCatchDue(a, TP, dt)) vsCaught(a, TP);
     } else if (a.state === 'charge') {
       d.look = lookAt; desiredHeading = a.chargeDir; desiredSpeed = a.timer > 3.7 ? 0 : ai.run * DF.speed;
       if (a.timer > 3.7) desiredHeading = a.chargeDir = angP;
@@ -652,7 +676,7 @@
       desiredHeading = dT > 9 + 3 * ai.size ? ang : ang + Math.PI / 2.2; // keep a wary distance, pacing around it
       desiredSpeed = dT > 14 + 3 * ai.size ? ai.walk * 1.2 : Math.max(ai.walk * 0.6, d.minSpeed || 0);
       a.roarT2 -= dt;
-      if (a.roarT2 < 0) { a.roarT2 = 7 + Math.random() * 5; a.roarStand = Math.max(2, d.roarDuration || 0); d.roar(2.2); A.roar(d.headPos(), ai.roarPitch, 1.2, 2.2); }
+      if (a.roarT2 < 0) { a.roarT2 = 7 + Math.random() * 5; a.roarStand = Math.max(2, d.roarDuration || 0); d.roar(2.2); A.roar(d.headPos(), ai.roarPitch, 1.2, 2.2, a.s); }
       if (a.roarStand > 0) { a.roarStand -= dt; desiredSpeed = 0; desiredHeading = ang; }
       if (a.timer < 0 || !a.bait || a.bait.dead) { a.state = 'wander'; a.home.copy(a.pos); a.timer = 0; a.bait = null; a.aware = Math.min(a.aware, 0.3); }
       else if (a.aware > 1.1) { a.state = 'alert'; a.timer = 0.8; a.bait = null; }
@@ -732,7 +756,7 @@
   function die(a) {
     if (state !== 'play') return;
     state = 'dead'; killer = a; deadT = 0; shake = 0.25; a.attackT = -1; if (document.pointerLockElement) document.exitPointerLock();
-    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8);
+    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s);
   }
 
   // ---------------- HUD ----------------
@@ -1154,9 +1178,10 @@
     const k = 1 - Math.exp(-dt * 12);
     VS.avatars.forEach(g => {
       const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
-      g.visible = !TREX().some(a => a.catch && a.catch.slot === p.slot) && (p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive()); // not in our own way when looking through their eyes
+      const held = TREX().find(a => a.catch && a.catch.slot === p.slot); // being caught: still seen standing there until the jaws close
+      g.visible = held ? held.catch.t < grabAt(held, catchInfo(held)) : ((p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive())); // not in our own way when looking through their eyes
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
-      const ghost = p.st === 'ghost', u = g.userData;
+      const ghost = p.st === 'ghost' && !held, u = g.userData; // (still a person, not yet a ghost, while being caught)
       g.position.y = ghost ? lerp(g.position.y, p.tp.pos.y - 1.65, k) + (u.mix ? Math.sin(performance.now() / 600 + u.slot) * 0.12 : 0) : Math.max(W.height(g.position.x, g.position.z), lerp(g.position.y, p.tp.pos.y - 1.65, k));
       g.rotation.y = p.yaw; g.scale.y = lerp(g.scale.y, p.cr && !ghost && !u.mix ? 0.62 : 1, k); // (the figure crouches by itself)
       if (!u.mix || !g.visible) return;
@@ -1218,7 +1243,7 @@
       a.speed = a.ns; a.d.lunge = a.nl; a.tranq = a.ntr ? 1 : 0;
       a.state = a.hunting === VS.mySlot ? 'chase' : 'wander';
       a.d.look = a.hunting === VS.mySlot ? camera.position : a.hunting >= 0 && VS.players[a.hunting] ? VS.players[a.hunting].tp.pos : null;
-      if (a.nroar !== a.roarSeen) { a.roarSeen = a.nroar; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.4 * a.ai.size + 0.3, 2.4); }
+      if (a.nroar !== a.roarSeen) { a.roarSeen = a.nroar; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.4 * a.ai.size + 0.3, 2.4, a.s); }
       if (a.nbite !== a.biteSeen) { a.biteSeen = a.nbite; if (a.d.oneShot) a.d.oneShot('bite'); }
       if (a.ncatch !== a.catchSeen) { a.catchSeen = a.ncatch; if (catchInfo(a) && !(a.catch && a.catch.slot === a.ncatchSlot)) startCatch(a, a.ncatchSlot); }
       applyDino(a, dt);
@@ -1240,7 +1265,7 @@
       activateDino(a, p, Math.atan2(anchor.x - p.x, anchor.z - p.z), true);
       a.home.lerp(anchor, 0.25);
       const n = roster.filter(x => x.d.root.visible).length, y = W.height(p.x, p.z) + 4;
-      A.roar(new V(p.x, y, p.z), a.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${n}頭）`, 3);
+      A.roar(new V(p.x, y, p.z), a.ai.roarPitch, 2.2, 2.6, a.s, null); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${n}頭）`, 3);
       DG.Net.broadcast({ t: 'fx', k: 'spawn', x: p.x, y, z: p.z, n });
       return;
     }
@@ -1254,7 +1279,7 @@
     if (COOP()) return coCaught(a, tp, p);
     p.st = 'dead'; p.dist = goalDist(tp.pos); p.time = VS.raceT;
     a.attackT = -1; a.feedT = 4; a.state = 'wander'; a.aware = 0.3; a.timer = 4; a.tgtP = null; a.home.copy(a.pos);
-    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8); a.d.roar(2.2);
+    A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s); a.d.roar(2.2);
     if (tp.local) localCaught(a); else if (p.id) DG.Net.send({ t: 'caught', k: TREX().indexOf(a) }, p.id);
     VS.players.forEach(o => { if (o && o !== p && o.st === 'alive') tell(o.tp, `${p.name} が恐竜に捕まった`, 2.5); });
     vsCheckEnd();
@@ -1263,7 +1288,7 @@
     if (COOP() && catchInfo(a) && !(a.catch && a.catch.slot === VS.mySlot)) startCatch(a, VS.mySlot);
     VS.dead = { a, t: 0 }; state = 'dead'; shake = 0.25; if (document.pointerLockElement) document.exitPointerLock();
     $('pause').style.display = 'none';
-    if (a) A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8);
+    if (a) A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s);
   }
   // one set of pickups for everybody: the host decides who reached one first, and tells everyone it is gone
   function vsClaim(i) {
@@ -1977,11 +2002,11 @@
   function coLandHost(type, pos, slot) {
     const near = r => roster.filter(a => a.d.root.visible && a.pos.distanceTo(pos) < r);
     if (type === 'cracker') { const b = { pos: pos.clone(), t: 6, remote: true, get dead() { return this.t <= 0; } }; VS.baits.push(b); if (lureAt(pos, 'flare', b, 90)) tell((VS.players[slot] || {}).tp, '🧨 捕食者が爆竹の音に向かった', 2); }
-    else if (type === 'flash') setTimeout(() => near(20).forEach(a => { a.blind = 5; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.timer = 0; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.2, 1.2, 1.6); }), 500);
+    else if (type === 'flash') setTimeout(() => near(20).forEach(a => { a.blind = 5; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.timer = 0; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.2, 1.2, 1.6, a.s); }), 500);
     else if (type === 'dyn') setTimeout(() => {
       const b = { pos: pos.clone(), t: 8, remote: true, get dead() { return this.t <= 0; } }; VS.baits.push(b);
       lureAt(pos, 'flare', b, 500);
-      near(12).forEach(a => { a.stun = 8; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 0.9, 1.6, 2); });
+      near(12).forEach(a => { a.stun = 8; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 0.9, 1.6, 2, a.s); });
       tellAll('💣 爆発音が湿地中に響いた…', 2.5);
     }, 3000);
     DG.Net.broadcast({ t: 'fx', k: 'it', i: type, x: pos.x, y: pos.y, z: pos.z, s: slot });
@@ -2141,7 +2166,7 @@
         const t = M.T[0];
         coLure('cage', 20, t.p, 90); // the meat's smell
         const a = roster.find(x => x.d.root.visible && Math.hypot(x.pos.x - t.p.x, x.pos.z - t.p.z) < 3 + 2 * x.ai.size);
-        if (a) { M.v = 1; a.stun = 15; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.8, 2.6); tellAll('🪤 捕食者が檻に閉じ込められた！（15秒で破られる）', 3.5); M.done = true; }
+        if (a) { M.v = 1; a.stun = 15; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.8, 2.6, a.s); tellAll('🪤 捕食者が檻に閉じ込められた！（15秒で破られる）', 3.5); M.done = true; }
       }
     } else if (d.kind === 'zone') {
       const t = M.T[0];
@@ -2167,7 +2192,7 @@
         } else {
           const nx = CO.ms.filter(M => M.stage === CO.stage).map(M => M.d.icon + M.d.name).join('・');
           tellAll(`第${CO.stage + 1}段階：${nx}`, 5);
-          roster.forEach(a => { if (a.d.root.visible) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 2, 2.6); } }); // they know
+          roster.forEach(a => { if (a.d.root.visible) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 2, 2.6, a.s); } }); // they know
         }
       }
     } else if (CO.phase === 'esc') coEscape(dt, alive);
@@ -2175,7 +2200,7 @@
     CO.traps.forEach(t => {
       if (t.sp) { t.sp += dt; return; }
       const a = roster.find(x => x.d.root.visible && !(x.stun > 0) && Math.hypot(x.pos.x - t.x, x.pos.z - t.z) < 1.2 + 1.4 * x.ai.size);
-      if (a) { t.sp = 0.01; a.stun = 7; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.2, 1.8, 2); tellAll('🪤 捕食者がトラバサミにかかった！（7秒）', 2.5); }
+      if (a) { t.sp = 0.01; a.stun = 7; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.2, 1.8, 2, a.s); tellAll('🪤 捕食者がトラバサミにかかった！（7秒）', 2.5); }
     });
     CO.traps = CO.traps.filter(t => !t.sp || t.sp < 5);
     CO.pings = CO.pings.filter(p => (p.ttl -= dt) > 0);
@@ -2239,7 +2264,7 @@
       if (D.calm * aggro > 30 && Math.random() < 0.35) a.timer = 0; // re-plan its walk now
     });
     // a roar somewhere in the dark now and then, so nobody forgets they are out there
-    if (!hunting && Math.random() < 0.07 * aggro) { const a = roster.find(x => x.d.root.visible && x.state === 'wander'); if (a) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.6, 2.6); } }
+    if (!hunting && Math.random() < 0.07 * aggro) { const a = roster.find(x => x.d.root.visible && x.state === 'wander'); if (a) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.6, 2.6, a.s); } }
   }
   // host: the night's random events
   function coEvents(dt) {
@@ -2249,7 +2274,7 @@
     E.next = 65 + Math.random() * 60;
     let k = EVK[Math.floor(Math.random() * EVK.length)]; if (k === E.k) k = EVK[(EVK.indexOf(k) + 1) % EVK.length];
     E.k = k; E.t = EV[k][1]; tellAll(EV[k][2], 4);
-    if (k === 'frenzy') roster.forEach(a => { if (a.d.root.visible) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 2, 2.6); } });
+    if (k === 'frenzy') roster.forEach(a => { if (a.d.root.visible) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 2, 2.6, a.s); } });
   }
   function coCaught(a, tp, p) {
     p.st = 'ghost'; p.time = VS.raceT;
@@ -2257,9 +2282,10 @@
     a.attackT = -1; a.feedT = 6; a.state = 'wander'; a.aware = 0.3; a.timer = 6; a.tgtP = null; a.home.copy(a.pos);
     const cat = catchInfo(a);
     if (cat) { // it seizes them, shakes them, dashes them down in front of itself, roars down at them and kills them
-      a.heading = Math.atan2(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z); a.feedT = a.timer = cat.len + 0.5;
+      if (a.speed <= 2) a.heading = Math.atan2(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z); // (on the run it keeps its line)
+      a.feedT = a.timer = cat.len + 0.5;
       a.catchN = (a.catchN || 0) + 1; startCatch(a, p.slot);
-    } else { A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8); a.d.roar(2.2); }
+    } else { A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s); a.d.roar(2.2); }
     if (tp.local) localCaught(a); else if (p.id) DG.Net.send({ t: 'caught', k: TREX().indexOf(a) }, p.id);
     VS.players.forEach(o => { if (o && o !== p && o.st !== 'gone') tell(o.tp, `💀 ${p.name} が沼の捕食者に捕まった…`, 3); });
     CO.dir.lull = 15; CO.dir.chase = 0;
@@ -2270,51 +2296,163 @@
   // down, then on their back looking up as it roars down into their face, and the last bite. Everyone else sees the
   // stalker with the body in its jaws, then lying in front of it.
   const catchInfo = a => (a && a.d.C && a.d.C.catch && a.s.model && a.s.model.catch) || null;
+  // when the jaws close on them: on the run, the moment the front of the jaws reaches them (catch.gT, set in updateCatches)
+  const grabAt = (a, c) => (a.catch && a.catch.run && c.run ? (a.catch.gT != null ? a.catch.gT : Infinity) : c.grab);
+  const BODY_MID = 0.18; // half the lying body's thickness (hurtFigure's origin is on its back)
+  // where the victim is and which way they face (the local player, or another one as last heard of)
+  const victim = slot => { const p = VS.players[slot]; return slot === VS.mySlot ? { pos: P.pos, yaw: P.yaw } : p ? { pos: p.tp.pos, yaw: p.yaw } : null; };
+  const smooth = k => { k = clamp(k, 0, 1); return k * k * (3 - 2 * k); };
+  // the body held in the jaws, in the head bone's space (x across, y along the snout, z up): its length across the
+  // jaws, its back and front facing the upper and lower jaw, so the jaws close on it rather than through it
+  const HOLD_Q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new V(0, 1, 0), new V(0, 0, 1), new V(1, 0, 0)));
+  const HOLD_FLIP = new THREE.Quaternion().setFromAxisAngle(new V(0, 0, 1), Math.PI).multiply(HOLD_Q); // the same, turned end for end
+  const hq0 = new THREE.Quaternion(), hm4 = new THREE.Matrix4(), hv0 = new V(), hv1 = new V(), hv2 = new V();
+  // which way along the lying body (its z) the person's head is: +1 or -1
+  function bodyHeadSign(B) {
+    if (B.userData.hs) return B.userData.hs;
+    const h = B.getObjectByName('head'); if (!h) return (B.userData.hs = -1);
+    const q = B.quaternion.clone(), p = B.position.clone(); B.quaternion.identity(); B.position.set(0, 0, 0); B.updateMatrixWorld(true);
+    const z = h.getWorldPosition(hv0).z; B.quaternion.copy(q); B.position.copy(p); B.updateMatrixWorld(true);
+    return (B.userData.hs = z >= 0 ? 1 : -1);
+  }
+  // a person standing, as the lying body turned upright: head up, front facing `fwd`
+  function uprightQuat(B, fwd, out) {
+    const hs = bodyHeadSign(B), z = hv0.set(0, hs, 0), y = hv1.set(fwd.x, 0, fwd.z).normalize(), x = hv2.crossVectors(y, z);
+    return out.setFromRotationMatrix(hm4.makeBasis(x, y, z));
+  }
   const CQ_SIDE = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new V(0, -1, 0), new V(0, 0, 1), new V(-1, 0, 0))); // look along the head's side
   const cq0 = new THREE.Quaternion(), cq1 = new THREE.Quaternion(), cm4 = new THREE.Matrix4(), cv1 = new V(), cv2 = new V();
+  function dropCatchBodies(C) {
+    if (!C) return;
+    if (C.body) { world.scene.remove(C.body); disposeTree(C.body); C.body = null; }
+    if (C.held) { world.scene.remove(C.held.g); disposeTree(C.held.g); C.held = null; }
+  }
   function clearCatch(a) {
-    if (a.catch && a.catch.body) { world.scene.remove(a.catch.body); disposeTree(a.catch.body); }
-    a.catch = null; a.catchN = 0; a.catchSlot = -1;
+    dropCatchBodies(a.catch);
+    a.catch = null; a.catchN = 0; a.catchSlot = -1; if (a.d) a.d.aim = null;
+  }
+  // the speed a run-catch clip's legs run at, t s into it (species.js catch.run.vel), and the ground it covers by then
+  function clipVel(K, t) {
+    if (t <= K[0][0]) return K[0][1];
+    for (let i = 1; i < K.length; i++) if (t <= K[i][0]) { const [t0, v0] = K[i - 1], [t1, v1] = K[i]; return v0 + (v1 - v0) * (t - t0) / (t1 - t0); }
+    return K[K.length - 1][1];
+  }
+  function clipDist(K, t) { let s = 0; const n = 24; for (let i = 0; i < n; i++) s += clipVel(K, (i + 0.5) * t / n) * t / n; return s; }
+  // host: a runner (tp) chased by a stalker with a run-catch: is now the moment to start it? -- the jaws, carried on by
+  // the run and reaching out as the clip does, come down on where the runner will be by then (moving as they are now)
+  function runCatchDue(a, tp, dt) {
+    const c = catchInfo(a); if (!c || !c.run || !c.run.vel || !tp) return false;
+    const tv = a.tpVel || (a.tpVel = new V()), tl = a.tpLast || (a.tpLast = tp.pos.clone());
+    if (a.tpOf !== tp) { a.tpOf = tp; tl.copy(tp.pos); tv.set(0, 0, 0); }
+    tv.lerp(hv0.set((tp.pos.x - tl.x) / Math.max(dt, 1e-3), 0, (tp.pos.z - tl.z) / Math.max(dt, 1e-3)), 1 - Math.exp(-dt * 6)); tl.copy(tp.pos);
+    // (the clip is played k times faster: it covers its own ground, in g / k s)
+    const k = clamp(a.speed / c.run.vel[0][1], 0.75, 1.25), g = c.grab / k, J = c.run.jaw;
+    const px = tp.pos.x + tv.x * g - a.pos.x, pz = tp.pos.z + tv.z * g - a.pos.z;
+    const along = px * Math.sin(a.heading) + pz * Math.cos(a.heading), side = px * Math.cos(a.heading) - pz * Math.sin(a.heading);
+    return along > 0 && along - (clipDist(c.run.vel, c.grab) + J[2]) < 0.4 && Math.abs(side - J[0]) < 2.2;
   }
   function startCatch(a, slot) {
-    if (a.catch && a.catch.body) { world.scene.remove(a.catch.body); disposeTree(a.catch.body); }
-    a.catch = { t: 0, slot, spot: null, fx: {} }; a.catchSlot = slot; a.d.lunge = 0; a.speed = 0;
+    dropCatchBodies(a.catch);
+    const c = catchInfo(a), run = a.speed > 2 && !!(c && c.run && c.run.vel);
+    // on the run the clip runs on its own legs (k: its pace matched to how fast this one was running)
+    a.catch = { t: 0, slot, spot: null, fx: {}, run, k: run ? clamp(a.speed / c.run.vel[0][1], 0.75, 1.25) : 1 }; a.catchSlot = slot; a.d.lunge = 0;
     a.d.oneShot('catch');
+  }
+  // the person in the jaws: the human model playing its 'Held' clip, hung from the jaws by the waist
+  function heldFigure(clipName) {
+    const clip = HUMAN.gltf && HUMAN.clip(clipName); if (!clip) return null;
+    const sc = THREE_SkeletonUtils.clone(HUMAN.gltf.scene), g = new THREE.Group(), inner = new THREE.Group();
+    inner.add(sc); inner.scale.setScalar(HUMAN.k); inner.position.y = HUMAN.y0; g.add(inner);
+    sc.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; o.userData.shared = true; } });
+    const mx = new THREE.AnimationMixer(sc); mx.clipAction(clip).play(); mx.setTime(0);
+    g.updateMatrixWorld(true); const w = sc.getObjectByName('spine_01'), waist = w ? w.getWorldPosition(new V()) : new V(0, 1, 0);
+    return { g, mx, waist, dur: clip.duration, grip: null };
   }
   function updateCatches(dt) {
     TREX().forEach(a => {
       const C = a.catch; if (!C) return;
       const c = catchInfo(a); if (!c) { a.catch = null; return; }
-      C.t += dt; a.d.lunge = 0;
-      const jp = a.d.jawPoint(cv1), once = (k, t) => { if (C.t >= t && !C.fx[k]) { C.fx[k] = 1; return true; } return false; };
-      if (once('grab', c.grab)) A.roar(jp, a.ai.roarPitch * 1.7, 1.3, 0.7);
-      if (once('drop', c.release)) { C.spot = jp.clone(); C.spot.y = gy(C.spot); A.step(C.spot, 2.4); }
-      if (once('roar', c.roar)) A.roar(a.d.headPos(), a.ai.roarPitch, 2.4, 2.8);
-      if (once('kill', c.kill)) A.roar(jp, a.ai.roarPitch * 1.5, 1.4, 0.6);
+      // on the run the clip plays at the pace this one was running at (its legs match the ground it covers), easing to
+      // its own pace after the grab; its timeline (C.t) is the clip's
+      C.rate = C.run ? (C.gT == null ? C.k : lerp(C.k, 1, smooth((C.t - C.gT) / 0.4))) : 1;
+      if (a.d.os && a.d.os.k === 'catch') a.d.os.rate = C.rate;
+      C.t += dt * C.rate; a.d.lunge = 0;
+      const once = (k, t) => { if (C.t >= t && !C.fx[k]) { C.fx[k] = 1; return true; } return false; };
+      const vt = victim(C.slot);
+      // on the run: the clip's own reach brings the open jaws down on them as they close (c.grab); the neck makes up
+      // the difference to where they really are, more and more toward the grab, and lets go after it
+      if (C.run && C.gT == null) {
+        if (vt && a.d.aimAt) a.d.aimAt(cv2.set(vt.pos.x, gy(vt.pos) + 1.05, vt.pos.z), smooth((C.t - 0.25) / (c.grab - 0.25)));
+        if (C.t >= c.grab) { C.gT = c.grab; if (a.d.aimRelease) a.d.aimRelease(); }
+      }
+      const g = grabAt(a, c), kill = C.t >= c.kill;
+      const jp = a.d.holdPoint(cv1, kill); // held where the teeth meet (the last bite: in the front of the jaws)
+      if (C.run && c.run && !kill && C.t < g + c.run.pull) jp.lerp(a.d.holdPoint(cv2, true), 1 - smooth((C.t - g) / c.run.pull)); // taken in the front, pulled in
+      if (once('grab', g)) A.roar(jp, a.ai.roarPitch * 1.7, 1.3, 0.7, a.s);
+      if (once('drop', c.release)) { // laid down where the front of its jaws will come down for the last bite
+        C.spot = c.drop ? a.d.root.localToWorld(cv2.set(0, 0, c.drop / a.d.root.scale.z)).clone() : jp.clone(); C.spot.y = gy(C.spot); A.step(C.spot, 2.4);
+      }
+      if (once('roar', c.roar)) A.roar(a.d.headPos(), a.ai.roarPitch, 2.4, 2.8, a.s, c.roarEnd ? [0, c.roarEnd[0] - c.roar, c.roarEnd[1] - c.roar] : null);
+      if (once('kill', c.kill)) A.roar(jp, a.ai.roarPitch * 1.5, 1.4, 0.6, a.s);
       // the body, for everyone but the one it happened to (who sees it all from inside)
       const mine = C.slot === VS.mySlot;
+      // taken on the run: from the grab until it is dashed down, the person struggling and flung about in the jaws (the
+      // human model's 'Held' clip), hung by the waist from the head as they were taken: upright, facing the way it runs
+      const heldOn = !mine && C.run && c.held && C.t >= g && C.t < c.release;
+      if (heldOn && !C.held && !C.heldNone) { C.held = heldFigure(c.held); if (C.held) world.scene.add(C.held.g); else C.heldNone = true; }
+      if (C.held) {
+        const Hf = C.held; Hf.g.visible = heldOn;
+        if (heldOn) {
+          a.d.head.getWorldQuaternion(cq0); const hp = a.d.head.getWorldPosition(hv2);
+          if (!Hf.grip) {
+            const q = new THREE.Quaternion().setFromAxisAngle(hv0.set(0, 1, 0), a.heading), inv = cq0.clone().invert();
+            const mid = a.d.holdPoint(new V()).lerp(a.d.holdPoint(new V(), true), 0.45), pos = mid.sub(Hf.waist.clone().applyQuaternion(q));
+            Hf.grip = { q: inv.clone().multiply(q), p: pos.sub(hp).applyQuaternion(inv) };
+          }
+          Hf.g.quaternion.copy(cq0).multiply(Hf.grip.q);
+          Hf.g.position.copy(Hf.grip.p).applyQuaternion(cq0).add(hp);
+          Hf.mx.setTime(Math.min(C.t - g, Hf.dur - 0.001));
+        }
+      }
       if (!mine && !C.body) { C.body = hurtFigure(); if (C.body) world.scene.add(C.body); }
       const B = C.body;
       if (B) {
-        B.visible = C.t >= c.grab;
-        if (C.t < c.release || C.t >= c.kill) { // across the jaws
-          a.d.head.getWorldQuaternion(cq0); B.position.copy(jp).y -= 0.25;
-          B.quaternion.copy(cq0).multiply(cq1.setFromAxisAngle(new V(0, 1, 0), Math.PI / 2));
+        B.visible = C.t >= g && !(C.held && heldOn);
+        if (B.visible && (C.t < c.release || kill)) { // in the jaws
+          a.d.head.getWorldQuaternion(cq0);
+          // it hangs from the jaws as it was taken (standing; or lying, for the last bite), held in the head's own frame so
+          // that it is the head that swings it about, and settles crosswise between the jaws as it is shaken
+          const key = kill ? 'hold2' : 'hold1';
+          if (!C[key]) {
+            const inv = cq0.clone().invert(), from = new V(), fq = new THREE.Quaternion();
+            if (kill && C.spot) { from.copy(C.spot).y += BODY_MID; fq.setFromAxisAngle(new V(0, 1, 0), a.heading + Math.PI / 2); }
+            else if (vt) { from.set(vt.pos.x, gy(vt.pos) + 0.95, vt.pos.z); uprightQuat(B, new V(-Math.sin(vt.yaw), 0, -Math.cos(vt.yaw)), fq); }
+            else { from.copy(jp); fq.copy(cq0).multiply(HOLD_Q); }
+            const q = inv.clone().multiply(fq);
+            C[key] = { p: from.sub(jp).applyQuaternion(inv), q, local: Math.abs(q.dot(HOLD_FLIP)) > Math.abs(q.dot(HOLD_Q)) ? HOLD_FLIP : HOLD_Q };
+          }
+          const H = C[key], k = kill ? smooth((C.t - c.kill) / 0.45) : smooth((C.t - g) / 0.7), kp = kill ? k : smooth((C.t - g) / 0.3);
+          B.quaternion.copy(cq0).multiply(hq0.copy(H.q).slerp(H.local, k));
+          B.position.copy(jp).add(hv0.copy(H.p).multiplyScalar(1 - kp).applyQuaternion(cq0));
+          B.position.addScaledVector(hv1.set(0, 1, 0).applyQuaternion(B.quaternion), -BODY_MID); // held by its middle (its origin is its back)
         } else if (C.spot) { B.position.copy(C.spot); B.quaternion.setFromAxisAngle(new V(0, 1, 0), a.heading + Math.PI / 2); }
       }
-      if (C.t >= c.len) { if (B) { world.scene.remove(B); disposeTree(B); } a.catch = null; }
+      if (C.t >= c.len) { dropCatchBodies(C); a.catch = null; }
     });
   }
   // the caught player's own camera through it all (VS.dead.t = time since the catch began)
   function catchCam(D, dt) {
-    const a = D.a, c = catchInfo(a), C = a.catch, t = D.t, d = a.d, jp = d.jawPoint(cv1);
+    const a = D.a, c = catchInfo(a), C = a.catch, t = C ? C.t : D.t, d = a.d, jp = d.jawPoint(cv1); // (the catch clip's own time)
     const look = (p, k, roll) => {
       cm4.lookAt(camera.position, p, new V(0, 1, 0)); cq0.setFromRotationMatrix(cm4);
       if (roll) cq0.multiply(cq1.setFromAxisAngle(new V(0, 0, 1), roll));
       camera.quaternion.slerp(cq0, 1 - Math.exp(-dt * k));
     };
     let shk = 0;
-    if (t < c.grab) { camera.position.lerp(P.pos, 1 - Math.exp(-dt * 6)); look(jp, 10); shk = 0.02; }   // the jaws come at you
+    if (t < grabAt(a, c)) {                                                                            // the jaws come at you
+      if (C && C.run) { P.pos.x += P.vel.x * dt; P.pos.z += P.vel.z * dt; P.pos.y = W.height(P.pos.x, P.pos.z) + P.eye; } // (still running)
+      camera.position.lerp(P.pos, 1 - Math.exp(-dt * 6)); look(jp, 10); shk = 0.02;
+    }
     else if (t < c.release) {                                                                          // thrown about in them
       // just outside the jaws on one side, looking out past the teeth as the head throws you about
       d.head.getWorldQuaternion(cq0);
@@ -2562,7 +2700,7 @@
       const ang = dexS / R;
       a.pos.set(cx + Math.cos(ang) * R, 0, cz + Math.sin(ang) * R); a.heading = Math.atan2(-Math.sin(ang), Math.cos(ang)) ;
       a.speed = dexV; a.turnRate = -dexV / R;
-      if (Math.floor((dexT - 3) / 9) !== Math.floor((dexT - 3 - dt) / 9) && dexT > 3) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 0.8, 2.4); }
+      if (Math.floor((dexT - 3) / 9) !== Math.floor((dexT - 3 - dt) / 9) && dexT > 3) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 0.8, 2.4, a.s); }
       applyDino(a, dt);
       const camA = -dexT * 0.08 + 0.6, cr = a.s.ai.size * 13 + 7;
       camera.position.set(cx + Math.cos(camA) * cr, W.height(cx, cz) + a.s.ai.size * 3 + 1.2, cz + Math.sin(camA) * cr);

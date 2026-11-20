@@ -139,11 +139,33 @@
       walkSpeed: 1.5, runSpeed: 6.6, lengthScale: 1.0376,                 // (the clips' own speeds; real size, 13.2 m)
       clips: { idle: 'idle', walk: 'walk', run: 'run', roar: 'roar', bite: 'bite', catch: 'catch', roar_low: 'roar_low' },
       mouth: [0, 0.813, -0.476],                                        // between the jaws, in the head bone's own space
-      catch: { len: 204 / 24, grab: 14 / 24, release: 77 / 24, blackout: [70 / 24, 100 / 24], lookUp: [116 / 24, 128 / 24], roar: 132 / 24, kill: 190 / 24 },
+      // The catch clip (models/local/horror_spino_src/game_catch.py) is made on the run: it runs in at full speed, the whole
+      // body banking into a corkscrew that turns the head on its side, the jaws opening only in the last moment and
+      // slamming shut on the runner's back at `grab`; it runs on with them, slowing to a stop, and shakes them in two
+      // bursts; then throws them down, glares, roars down at them and bites (release ... kill, as before).
+      catch: { len: 204 / 24, grab: 0.81, release: 77 / 24, blackout: [70 / 24, 100 / 24], lookUp: [116 / 24, 128 / 24], kill: 190 / 24,
+        // the roar over the body: the voice starts as the jaws open (127 / 24) and dies away as they close (165-177 / 24)
+        roar: 125 / 24, roarEnd: [165 / 24, 177 / 24],
+        // measured from the clip, in the animal's own space (x left/right, y up, z ahead), metres: run.jaw is the middle
+        // of the open jaws at the grab; run.vel the speed the clip's legs run at (s, m/s), which the game moves it at;
+        // the catch starts when that brings the jaws onto where the runner will be, and the neck makes up the rest
+        // (GltfDino.aimAt, keeping the clip's own head); run.pull: the body drawn in from the front of the jaws
+        run: { jaw: [1.08, 1.42, 5.6], vel: [[0, 6.6], [19 / 24, 6.6], [27 / 24, 5.3], [35 / 24, 3.0], [43 / 24, 1.0], [48 / 24, 0.1], [50 / 24, 0]], pull: 0.3 },
+        // the person in the jaws plays the human model's 'Held' clip from the grab (the struggle and the shake's swing,
+        // simulated from this clip's own jaw path: models/local/human_src/held.py), gripped round the waist
+        held: 'Held',
+        // where the body is laid down (ahead of it), right under the jaws' front at the final bite;
+        // that front of the jaws in the head bone's space (the final bite takes the body there too), and where the teeth
+        // meet further back
+        drop: 5.14, tip: [0, 1.5, -0.26], hold: [0, 0.85, -0.25] },
       // no texture files: the hide is drawn by the shader in gltf_dino.js (colours are sRGB hex); `_mouth` marks the mouth
       hide: { match: /skin/, back: 0x2b2621, flank: 0x3f372e, belly: 0x51483a, band: 0x1b1814, mouth: 0x5e1a18, freq: 44, plateFreq: 10, bandFreq: 2.0, relief: 0.005 }
     },
-    ai: Object.assign({}, DG.SPECIES.trex.ai, { maxCount: 3, roarPitch: 0.5, spawnEvery: 0 })
+    ai: Object.assign({}, DG.SPECIES.trex.ai, { maxCount: 3, roarPitch: 0.5, spawnEvery: 0 }),
+    // recorded roars (audio.js): one of `roar` at random, `short` for the quick snarls of the catch; `mouth` times a
+    // roar to the roar clip (measured from it): the jaws open at 1.8 s and close from 4.2 to 5.3 s, and the voice
+    // (whose sound begins ~0.15 s into the files) starts just before they open and dies away as they close
+    voice: { roar: ['sounds/spino/roar_a.mp3', 'sounds/spino/roar_b.mp3', 'sounds/spino/roar_c.mp3'], short: ['sounds/spino/snarl.mp3'], mouth: [1.65, 4.2, 5.3] }
   });
   DG.ALL_SPECIES = ['trex', 'utah', 'trike', 'carno'];
   // 現在はティラノサウルスだけのモード。全種に戻すときは DG.SPECIES_ORDER = DG.ALL_SPECIES にする

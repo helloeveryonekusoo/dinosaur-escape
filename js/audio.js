@@ -1,4 +1,4 @@
-// Synthesised audio: roars, footsteps, heartbeat, ambience (WebAudio, no files)
+// Synthesised audio: roars, footsteps, heartbeat, ambience (WebAudio); a species may have recorded roars instead
 (function () {
   const DG = window.DG;
   let ctx = null, master, noiseBuf;
@@ -19,6 +19,7 @@
     master = ctx.createGain(); master.gain.value = 0.9;
     const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
     noiseBuf = noise(3); A.ok = true;
+    for (const u in VOICES) decodeVoice(u);
     // ambience: wind
     const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
@@ -39,8 +40,37 @@
     if (l.positionX) { l.positionX.value = pos.x; l.positionY.value = pos.y; l.positionZ.value = pos.z; l.forwardX.value = fwd.x; l.forwardY.value = fwd.y; l.forwardZ.value = fwd.z; l.upX.value = 0; l.upY.value = 1; l.upZ.value = 0; }
     else { l.setPosition(pos.x, pos.y, pos.z); l.setOrientation(fwd.x, fwd.y, fwd.z, 0, 1, 0); }
   };
-  A.roar = function (pos, pitch, vol, dur) {
+  // ---- recorded voices (a species with `voice` in species.js): fetched at load, decoded once sound is on ----
+  const VOICES = {}; // url -> { ab: ArrayBuffer promise, buf: AudioBuffer }
+  function decodeVoice(u) {
+    const v = VOICES[u]; if (!ctx || v.buf || v.dec) return; v.dec = true;
+    v.ab.then(ab => { if (ab) ctx.decodeAudioData(ab, b => { v.buf = b; }, () => { }); });
+  }
+  A.loadVoices = function (urls) {
+    urls.forEach(u => { if (VOICES[u]) return; VOICES[u] = { ab: fetch(u).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null) }; decodeVoice(u); });
+  };
+  // a roar from a recording: rate = pitch relative to the species' own (a higher, shorter snarl plays faster);
+  // it starts `at` s from now and, when f1 > 0, fades out from f0 to f1 s after its start
+  function playVoice(buf, pos, vol, rate, at, f0, f1) {
+    const t = ctx.currentTime + at, out = panner(pos, 14), src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buf; src.playbackRate.value = rate; g.gain.value = 1.6 * vol;
+    if (f1 > 0) { g.gain.setValueAtTime(1.6 * vol, t + f0); g.gain.exponentialRampToValueAtTime(0.0001, t + f1); }
+    src.connect(g); g.connect(out); src.start(t); src.stop(t + (f1 > 0 ? f1 : buf.duration / rate) + 0.05);
+  }
+  // spec (optional): the species roaring; with recorded voices it uses one of them instead of the synthesised roar.
+  // mouth (optional) = [start, fade from, silent by] in seconds from now, so the voice comes out of the open jaws;
+  // a long roar defaults to the species' own (its roar clip, started with it), null plays it at once and in full
+  A.roar = function (pos, pitch, vol, dur, spec, mouth) {
     if (!A.ok) return; pitch = pitch || 1; vol = vol || 1; dur = dur || 2.4;
+    const vc = spec && spec.voice;
+    if (vc) {
+      const short = dur < 1.2, list = (short && vc.short) || vc.roar, ready = list.map(u => VOICES[u] && VOICES[u].buf).filter(Boolean);
+      if (ready.length) {
+        const m = short ? [0, (dur + 0.4) * 0.7, dur + 0.4] : mouth !== undefined ? mouth : vc.mouth;
+        playVoice(ready[(Math.random() * ready.length) | 0], pos, vol, pitch / spec.ai.roarPitch, m ? m[0] : 0, m ? m[1] - m[0] : 0, m ? m[2] - m[0] : 0);
+        return;
+      }
+    }
     const t = ctx.currentTime, out = panner(pos, 14);
     const env = ctx.createGain(); env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(vol * 0.9, t + 0.25); env.gain.setValueAtTime(vol * 0.8, t + dur * 0.6); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
