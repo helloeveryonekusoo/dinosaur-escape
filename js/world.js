@@ -94,7 +94,7 @@
   // No ravines here: the swamp's pools (W.WATER) are what slows you down and makes noise.
   const COOP_MAP = { LIMIT: 330, SIZE: 900 };
   W.WATER = -1e9;
-  W.NIGHT_FOG = 0.026; // how thick the night's fog is (co-op): about 55 m of sight
+  W.NIGHT_FOG = 0.016; // how thick the night's fog is (co-op): about 85 m of sight
   // The way out is picked from the seed too: 0 a helicopter at a landing zone, 1 a boat at a jetty (on a pool dug
   // out beside it), 2 an old mine tunnel in the hills at the map's edge. W.GOAL is where you board it.
   // Sixteen more spots, each on a small island, are where this game's missions put their things (game.js).
@@ -333,20 +333,22 @@
       // pale, slightly blue haze: distance washes things out toward the colour of the sky (aerial perspective)
       scene.fog = new THREE.FogExp2(0xb1bfc0, 0.0075);
     } else {
-      // a rainy night under a thin, clouded moon: dark, but shapes stay readable, with a cold haze that swallows
-      // everything past ~55 m (see NIGHT_FOG; the fog's colour is set again every frame in update, for lightning)
+      // a rainy night under a thin, clouded moon: dark, but the ground, trees and pools stay readable on any screen,
+      // with a cold haze that swallows everything past ~85 m (see NIGHT_FOG; the fog's colour is set again every
+      // frame in update, for lightning)
       sunDir = new V().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 38), THREE.MathUtils.degToRad(40));
-      scene.background = new THREE.Color(0x0c1218);
+      scene.background = new THREE.Color(0x262e3a);
       scene.environment = null;
       scene.fog = new THREE.FogExp2(0x10161c, W.NIGHT_FOG);
     }
-    const sun = new THREE.DirectionalLight(NIGHT ? 0x9db2d4 : 0xffe4bc, NIGHT ? 2.4 : 2.9);
+    const sun = new THREE.DirectionalLight(NIGHT ? 0x9db2d4 : 0xffe4bc, NIGHT ? 5.0 : 2.9);
     sun.castShadow = true; sun.shadow.mapSize.set(NIGHT ? Math.min(Q.shadow, 2048) : Q.shadow, NIGHT ? Math.min(Q.shadow, 2048) : Q.shadow);
     const sc = sun.shadow.camera; sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 250;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
     scene.add(sun, sun.target);
-    hemi = new THREE.HemisphereLight(NIGHT ? 0x3a4e6c : 0xc4d6ea, NIGHT ? 0x1a1812 : 0x545038, NIGHT ? 1.2 : 0.5); // sky fill, so shade under the trees stays readable
+    hemi = new THREE.HemisphereLight(NIGHT ? 0x3a4e6c : 0xc4d6ea, NIGHT ? 0x1a1812 : 0x545038, NIGHT ? 7.0 : 0.5); // sky fill, so shade under the trees stays readable
     scene.add(hemi);
+    renderer.toneMappingExposure = NIGHT ? 1.45 : 0.85; // the night is exposed a little brighter
 
     // ---- terrain ----
     const S = W.SIZE, R = Math.round(S / 3.125); // about 3 m between vertices on any map size
@@ -979,7 +981,7 @@
           // lightning, the fire, the crates' lanterns and the tower's beacon
           flashK = Math.max(0, flashK - dt * 3.2);
           sun.intensity = sun0 + flashK * 3.5; hemi.intensity = hemi0 + flashK * 2.2;
-          if (scene.fog) scene.fog.color.setRGB(0.063 + flashK * 0.35, 0.086 + flashK * 0.38, 0.11 + flashK * 0.42, THREE.SRGBColorSpace);
+          if (scene.fog) scene.fog.color.setRGB(0.17 + flashK * 0.28, 0.2 + flashK * 0.31, 0.25 + flashK * 0.35, THREE.SRGBColorSpace);
           if (props.fire) { const f = 0.75 + 0.25 * Math.sin(t * 17) * Math.sin(t * 7.3); props.fire.light.intensity = 9 * f; props.fire.ember.material.opacity = 0.6 + 0.3 * f; }
           props.caches.forEach(c => { const f = 0.7 + 0.3 * Math.sin(t * 9 + c.ph) * Math.sin(t * 3.1 + c.ph * 2); c.glow.material.opacity = (c.dim ? 0.15 : 0.75) * f; });
           const tw = props.tower;
