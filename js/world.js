@@ -94,6 +94,7 @@
   // No ravines here: the swamp's pools (W.WATER) are what slows you down and makes noise.
   const COOP_MAP = { LIMIT: 330, SIZE: 900 };
   W.WATER = -1e9;
+  W.SAFE_R = 8; // a safe zone's radius (co-op): the ring of lanterns
   W.NIGHT_FOG = 0.016; // how thick the night's fog is (co-op): about 85 m of sight
   // The way out is picked from the seed too: 0 a helicopter at a landing zone, 1 a boat at a jetty (on a pool dug
   // out beside it), 2 an old mine tunnel in the hills at the map's edge. W.GOAL is where you board it.
@@ -114,10 +115,20 @@
       if ([camp, lz, tower, ...caches, ...spots].some(s => Math.hypot(s.x - q.x, s.z - q.z) < (s === camp ? 70 : s === lz ? 60 : gap))) continue;
       spots.push(q);
     }
+    // two or three safe zones (game.js keeps the stalkers out of them until the way out is opened): on their own
+    // islands, well away from the camp, the way out and each other
+    const safe = [];
+    for (let tries = 0, gap = 150; safe.length < 3 && tries < 3000; tries++) {
+      if (tries % 1000 === 999) gap -= 35;
+      const q = P(rr() * Math.PI * 2, 60 + Math.sqrt(rr()) * 215);
+      if ([camp, lz, tower, ...caches, ...spots].some(s => Math.hypot(s.x - q.x, s.z - q.z) < (s === camp ? 90 : s === lz ? 80 : s === tower ? 50 : 32))) continue;
+      if (safe.some(s => Math.hypot(s.x - q.x, s.z - q.z) < gap)) continue;
+      safe.push(q);
+    }
     // the boat lies on water just off the jetty (on the side away from the map's centre); the tunnel's mouth faces the swamp
     const out = new V(lz.x, 0, lz.z).normalize();
     const boat = lz.clone().addScaledVector(out, 11), mouth = lz.clone();
-    W.SITES = { camp, tower, lz, caches, spots, esc, boat, mouth, out };
+    W.SITES = { camp, tower, lz, caches, spots, esc, boat, mouth, out, safe };
     W.GOAL.copy(esc === 1 ? lz.clone().addScaledVector(out, 4) : lz);
     const face = Math.atan2(-camp.x, -camp.z); // the starts sit round the camp fire, the first facing the map's centre
     return [0, 1, 2, 3].map(k => camp.clone().add(P(face + (k - 1.5) * 0.7, 6)));
@@ -177,6 +188,10 @@
       for (const p of [S.camp, S.tower, S.lz, ...S.caches]) {
         const d = Math.hypot(x - p.x, z - p.z); if (d > 34) continue;
         const k = 1 - N.smoothstep(12, 34, d); h = h + (Math.max(h, 0.35) - h) * k;
+      }
+      for (const p of S.safe) { // the safe zones: an island a little wider than the ring of lanterns
+        const d = Math.hypot(x - p.x, z - p.z); if (d > 24) continue;
+        const k = 1 - N.smoothstep(W.SAFE_R + 3, 24, d); h = h + (Math.max(h, 0.35) - h) * k;
       }
       for (const p of S.spots) { // the mission spots: smaller islands
         const d = Math.hypot(x - p.x, z - p.z); if (d > 18) continue;
@@ -506,11 +521,13 @@
     };
     // wet: may stand in a swamp pool (dead trunks and reeds do; nothing else grows in open water)
     const SITE_LIST = W.SITES ? [W.SITES.tower, ...W.SITES.caches, ...W.SITES.spots, W.SITES.boat] : [];
+    const SAFE_LIST = W.SITES ? W.SITES.safe : [];
     const okAt = (x, z, clear, wet) => {
       if (Math.abs(x) > W.LIMIT + 40 || Math.abs(z) > W.LIMIT + 40) return false;
       for (const p of W.STARTS) if (Math.hypot(x - p.x, z - p.z) < clear) return false;
       if (Math.hypot(x - W.GOAL.x, z - W.GOAL.z) < clear) return false;
       for (const p of SITE_LIST) if (Math.hypot(x - p.x, z - p.z) < Math.max(clear, 9)) return false;
+      for (const p of SAFE_LIST) if (Math.hypot(x - p.x, z - p.z) < Math.max(clear, W.SAFE_R + 3.5)) return false; // the safe zones stay open
       if (W.COOP && !wet && W.height(x, z) < W.WATER + 0.08) return false;
       // the glade at the start, where the title screen shows the dinosaur off: nothing taller than ferns grows there
       if (clear >= 10 && !W.VERSUS && !W.COOP && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
@@ -743,7 +760,8 @@
 
     // ---- the swamp: open water, reed beds along it, and the mission sites (co-op) ----
     let reedField = null;
-    const props = { caches: [], tower: null, camp: null, lz: null, fire: null };
+    const props = { caches: [], safe: [], tower: null, camp: null, lz: null, fire: null };
+    let safeLit = true;
     if (W.COOP) {
       // still, black water with a faint sheen
       const wg = new THREE.PlaneGeometry(S, S, 1, 1); wg.rotateX(-Math.PI / 2);
@@ -850,6 +868,29 @@
         scene.add(g); props.caches.push({ group: g, glow, lantern, pos: c.clone().setY(ground(c)), ph: rnd() * 6 });
         colliders.push({ x: c.x, z: c.z, r: 0.75 });
       });
+      // safe zones: a ring of lanterns on posts round a small clearing, a faint line of light on the ground between
+      // them, and a warm light in the middle. They go dark when the way out is opened (world.setSafe(false)).
+      W.SITES.safe.forEach(c => {
+        const g = new THREE.Group(), y0 = ground(c); g.position.set(c.x, y0, c.z);
+        const cores = [], glows = [], NP = 6, Rr = W.SAFE_R;
+        for (let i = 0; i < NP; i++) {
+          const a = (i + 0.5) / NP * 6.283, x = Math.sin(a) * Rr, z = Math.cos(a) * Rr, y = W.height(c.x + x, c.z + z) - y0;
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.9, 5), mat(0x2b2118)); pole.position.set(x, y + 0.95, z); g.add(pole);
+          const lm = model(g, 'lantern', 0.4, x, y + 1.9, z, { fit: 'h' });
+          const core = new THREE.Mesh(new THREE.SphereGeometry(lm ? 0.06 : 0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd28a })); core.position.set(x, y + (lm ? 2.08 : 2.0), z); g.add(core);
+          const gl = glowSprite(0xffb860, 2.6); gl.position.copy(core.position); g.add(gl);
+          cores.push(core); glows.push(gl);
+          colliders.push({ x: c.x + x, z: c.z + z, r: 0.12 });
+        }
+        // the line on the ground, laid over the terrain
+        const rg = new THREE.RingGeometry(Rr - 0.12, Rr + 0.12, 72, 1).rotateX(-Math.PI / 2), rp = rg.attributes.position;
+        for (let i = 0; i < rp.count; i++) rp.setY(i, W.height(c.x + rp.getX(i), c.z + rp.getZ(i)) - y0 + 0.07);
+        const ring = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, opacity: 0.4, depthWrite: false }));
+        g.add(ring);
+        const light = new THREE.PointLight(0xffc27a, 7, 22, 1.5); light.position.set(0, 3, 0); g.add(light);
+        g.traverse(o => { if (o.isMesh && !cores.includes(o) && o !== ring) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); props.safe.push({ group: g, cores, glows, ring, light, ph: rnd() * 6 });
+      });
       // the way out (only the one this game uses is built); the red flare is lit when it is time to board
       const ES = W.SITES, l = ES.lz, face = Math.atan2(ES.out.x, ES.out.z);
       if (ES.esc === 0) { // landing zone: a ring of stakes round a flattened clearing
@@ -952,6 +993,8 @@
       setTower(on) { if (props.tower) props.tower.on = !!on; },
       // the tunnel gate swings open (k 0..1)
       setGate(k) { if (props.gate) props.gate.rotation.y = k * 1.9; },
+      // co-op: the safe zones' lanterns lit (they keep the stalkers out) or dark
+      setSafe(on) { safeLit = !!on; },
       // lightning: k (0..1) brightens the whole night for a moment
       flash(k) { flashK = Math.max(flashK, k); },
       // take this map out of the scene and free its GPU memory (geometry, materials, textures, environment map)
@@ -989,6 +1032,13 @@
             const on = tw.on ? (Math.sin(t * 3.5) > 0 ? 1 : 0.15) : 0;
             tw.beacon.intensity = 60 * on; tw.halo.material.opacity = 0.9 * on; tw.bulb.material.color.setHex(on > 0.5 ? 0xff4030 : 0x401010);
           }
+          props.safe.forEach(z => { // the lanterns flicker; out, they fade to nothing over a second or two
+            const f = 0.85 + 0.15 * Math.sin(t * 8 + z.ph) * Math.sin(t * 2.7 + z.ph * 2);
+            z.k = Math.max(0, Math.min(1, (z.k == null ? 1 : z.k) + (safeLit ? dt : -dt * 0.7)));
+            z.light.intensity = 7 * f * z.k; z.ring.material.opacity = 0.4 * z.k; z.ring.visible = z.k > 0.01;
+            z.glows.forEach(g => g.material.opacity = 0.8 * f * z.k);
+            z.cores.forEach(c => c.material.color.setRGB(0.25 + 0.75 * z.k, 0.18 + 0.64 * z.k, 0.1 + 0.44 * z.k));
+          });
           motes.material.opacity = 0.55 + 0.35 * Math.sin(t * 2.3);
           if (props.boat) { props.boat.position.y = W.WATER + 0.05 + Math.sin(t * 1.3) * 0.05; props.boat.rotation.z = Math.sin(t * 0.9) * 0.03; }
         }

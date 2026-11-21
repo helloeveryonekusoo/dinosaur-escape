@@ -594,6 +594,7 @@
       applyDino(a, dt); return;
     }
     if (a.blind > 0) a.blind -= dt;
+    if (list && safeOn()) list = list.filter(tp => !inSafe(tp.pos)); // (co-op) nobody in a safe zone is hunted
     let TP = pickTarget(a, list);
     if (!TP) { TP = LOCAL; playing = false; }
     a.tgtP = TP;
@@ -608,10 +609,10 @@
       a.aware = clamp(a.aware + (gain > 0 ? gain * dt : -0.12 * dt), 0, 1.6);
       if (gain > 0 && a.aware > 0.4) { a.lastSeen.copy(TP.pos); a.lost = 0; }
       else if (!(a.state === 'chase' && a.detourT > 0)) a.lost += dt; // while going round a ravine it still knows where you are
-    }
+    } else a.lost += dt; // nobody it may hunt (all in a safe zone): it loses them
     // state machine
     if (a.state === 'wander') {
-      if (a.timer < 0 || a.pos.distanceTo(a.target) < 4) { a.timer = 6 + Math.random() * 10; if (playing && ai.type === 'hunter') a.home.lerp(TP.pos, 0.3); a.target.copy(a.home).add(new V((Math.random() - 0.5) * 70, 0, (Math.random() - 0.5) * 70)); a.idle = Math.random() < 0.35; }
+      if (a.timer < 0 || a.pos.distanceTo(a.target) < 4) { a.timer = 6 + Math.random() * 10; if (playing && ai.type === 'hunter' && !(VS.on && COOP())) a.home.lerp(TP.pos, 0.3); a.target.copy(a.home).add(new V((Math.random() - 0.5) * 70, 0, (Math.random() - 0.5) * 70)); a.idle = Math.random() < 0.35; }
       desiredSpeed = a.idle ? 0 : Math.max(ai.walk, d.minSpeed || 0); desiredHeading = Math.atan2(a.target.x - a.pos.x, a.target.z - a.pos.z);
       d.look = null;
       if (a.aware > 0.45) { a.state = 'alert'; a.timer = 1.6; }
@@ -729,6 +730,18 @@
         } else if (q) desiredHeading = Math.atan2(q.tx * a.detourSign, q.tz * a.detourSign);
       }
     }
+    // (co-op) a safe zone in the way: it doesn't walk into the lanterns' ring but paces round it, slowly when what it
+    // wants is inside
+    if (safeOn() && desiredSpeed > 0) for (const s of W.SITES.safe) {
+      const rx = a.pos.x - s.x, rz = a.pos.z - s.z, rd = Math.hypot(rx, rz) || 1, m = W.SAFE_R + 0.5 * ai.size + 1.2;
+      if (rd > m + 5) { if (a.ringOf === s) a.ringOf = null; continue; }
+      const hx = Math.sin(desiredHeading), hz = Math.cos(desiredHeading), inward = -(hx * rx + hz * rz) / rd;
+      if (inward <= 0) continue;
+      if (a.ringOf !== s) { a.ringOf = s; a.ringSg = hx * rz - hz * rx >= 0 ? 1 : -1; } // round the ring, keeping to the side it first turned to
+      const sg = a.ringSg, push = (m + 5 - rd) / 5 * 0.6;
+      desiredHeading = Math.atan2(sg * rz / rd + rx / rd * push, -sg * rx / rd + rz / rd * push);
+      if (Math.hypot(a.target.x - s.x, a.target.z - s.z) < m || Math.hypot(a.lastSeen.x - s.x, a.lastSeen.z - s.z) < m) desiredSpeed = Math.min(desiredSpeed, ai.walk);
+    }
     // steering
     const ox = a.pos.x, oz = a.pos.z;
     const maxTurn = ai.turn / (1 + a.speed * 0.06) * (a.tranq > 0 ? 0.6 : 1);
@@ -747,6 +760,10 @@
   }
   function applyDino(a, dt) {
     const d = a.d;
+    if (safeOn()) for (const s of W.SITES.safe) { // (co-op) kept out of the safe zones: it slides round the ring of lanterns
+      const dx = a.pos.x - s.x, dz = a.pos.z - s.z, dd = Math.hypot(dx, dz), m = W.SAFE_R + 0.5 * a.ai.size + 1.2;
+      if (dd < m) { const k = dd > 1e-3 ? m / dd : 0; a.pos.x = s.x + (k ? dx * k : m); a.pos.z = s.z + dz * k; }
+    }
     a.pos.y = W.height(a.pos.x, a.pos.z);
     d.root.position.copy(a.pos); d.root.rotation.y = a.heading;
     const ph0 = d.phase; d.update(dt, a.speed, a.turnRate);
@@ -1277,6 +1294,7 @@
   // ---- caught / goal / end ----
   function vsCaught(a, tp) {
     const p = VS.players[tp.slot]; if (!p || p.st !== 'alive') return;
+    if (COOP() && inSafe(tp.pos)) return; // safe
     if (COOP()) return coCaught(a, tp, p);
     p.st = 'dead'; p.dist = goalDist(tp.pos); p.time = VS.raceT;
     a.attackT = -1; a.feedT = 4; a.state = 'wander'; a.aware = 0.3; a.timer = 4; a.tgtP = null; a.home.copy(a.pos);
@@ -1616,11 +1634,16 @@
     dir: { t: 0, calm: 0, chase: 0, lull: 0 }, light: true, hold: '', pingCD: 0, boltT: 20, growlT: 3, beepT: 0, lureT: {},
     lights: null, rain: null, marks: null, wire: null, prevKey: '', hudT: 0, flashT: 0
   };
-  // the co-op difficulty: the same dials, but two stalkers (three on the hardest level) there from the start, never more
+  // the co-op difficulty: the same dials, but a fixed number of stalkers there from the start, never more: one on the
+  // easy level, three on the hardest, two otherwise
   function coDiff(k) {
-    const d = DG.DIFFS[vsDiffKey(k)], n = k === 'vhard' ? 3 : 2;
+    const key = vsDiffKey(k), d = DG.DIFFS[key], n = key === 'easy' ? 1 : key === 'vhard' ? 3 : 2;
     return Object.assign({}, d, { count: n, max: n, spawnEvery: 0, items: d.items * 1.3, startFlare: Math.max(1, d.startFlare), mix: 0 });
   }
+  // the safe zones (world.js W.SITES.safe): while the missions last no stalker can come into one, and nobody in one is
+  // hunted; once the way out is opened their lanterns go out and they are open ground like the rest
+  const safeOn = () => VS.on && COOP() && CO.phase === 'm' && !!(W.SITES && W.SITES.safe && W.SITES.safe.length);
+  const inSafe = (p, m) => safeOn() && W.SITES.safe.some(s => Math.hypot(p.x - s.x, p.z - s.z) < W.SAFE_R + (m || 0));
   const coAlive = () => VS.players.filter(p => p && p.st === 'alive');
   const tellAll = (text, dur) => VS.players.forEach(p => { if (p && p.st !== 'gone') tell(p.tp, text, dur); });
   const coMe = () => VS.players[VS.mySlot];
@@ -2190,6 +2213,7 @@
           CO.phase = 'esc'; CO.esc = { step: 0, p: 0, t: 0 };
           const e = W.SITES.esc;
           tellAll(`全ミッション達成！ 今夜の脱出手段は「${ESC_NAME[e]}」— ${e === 0 ? '無線塔で救助ヘリを呼べ' : e === 1 ? '船着き場でボートのエンジンをかけろ' : '湿地の外れの坑道の鉄柵をこじ開けろ'}（コンパスに${ESC_NAME[e]}の印）`, 6);
+          setTimeout(() => { if (VS.on && CO.phase === 'esc') tellAll('安全地帯の明かりが消えた — もう捕食者を防げない', 4); }, 6500);
         } else {
           const nx = CO.ms.filter(M => M.stage === CO.stage).map(M => M.d.name).join('・');
           tellAll(`第${CO.stage + 1}段階：${nx}`, 5);
@@ -2243,9 +2267,9 @@
     world.setGoal(CO.phase === 'esc' && E.step === 2);
     if (CO.phase === 'esc' && E.step >= 1) A.radio();
   }
-  // The stalkers' director: after a quiet spell one closes in on someone (from nearer the longer the calm lasts, and
-  // more eagerly in the later stages); after a long chase it backs off for a while, so the night has quiet stretches
-  // and sudden scares rather than one endless chase. Whoever carries an egg is smelt out; the lookout draws them.
+  // The stalkers' director: until they see or hear someone, the stalkers roam the swamp at random, paying no heed to
+  // where the players are. Two mission rules still steer them: whoever carries an egg is smelt out, and the lookout
+  // draws one. Now and then one roars somewhere in the dark.
   function coDirector(dt, alive) {
     const D = CO.dir; if (!alive.length) return;
     const hunting = roster.some(a => a.d.root.visible && (a.state === 'chase' || a.state === 'alert' || a.state === 'charge'));
@@ -2254,15 +2278,27 @@
     D.lull = Math.max(0, D.lull - dt);
     D.t -= dt; if (D.t > 0) return; D.t = 3;
     const aggro = (CO.phase === 'esc' ? 2.2 : [1, 1.3, 1.7][CO.stage] || 1) * (CO.ev.t > 0 && CO.ev.k === 'frenzy' ? 2 : 1);
+    const out = alive.filter(p => !inSafe(p.tp.pos)); if (out.length) alive = out; // those out in the open first
     const egg = alive.filter(p => CO.bag[p.slot] === 'egg'), zone = coM('lookout');
     roster.forEach((a, i) => {
       if (!a.d.root.visible || a.state !== 'wander' || a.stun > 0) return;
-      const tp = (egg.length && Math.random() < 0.7 ? egg : alive)[Math.floor(Math.random() * (egg.length ? egg.length : alive.length))].tp;
-      if (D.lull > 0) { const dx = a.pos.x - tp.pos.x, dz = a.pos.z - tp.pos.z, l = Math.hypot(dx, dz) || 1; a.home.set(a.pos.x + dx / l * 45, 0, a.pos.z + dz / l * 45); return; }
-      if (coActive(zone) && i === 0) { const z = zone.T[0].p; a.home.set(z.x + (Math.random() - 0.5) * 40, 0, z.z + (Math.random() - 0.5) * 40); return; }
-      const r = Math.max(12, 95 - D.calm * aggro * 1.6);
-      a.home.set(tp.pos.x + (Math.random() - 0.5) * r * 2, 0, tp.pos.z + (Math.random() - 0.5) * r * 2);
-      if (D.calm * aggro > 30 && Math.random() < 0.35) a.timer = 0; // re-plan its walk now
+      // (mission rules) whoever carries an egg is smelt out; the lookout draws the first one
+      if (egg.length && Math.random() < 0.7) {
+        const tp = egg[Math.floor(Math.random() * egg.length)].tp, r = Math.max(12, 95 - D.calm * aggro * 1.6);
+        a.home.set(tp.pos.x + (Math.random() - 0.5) * r * 2, 0, tp.pos.z + (Math.random() - 0.5) * r * 2); a.roamT = 0; return;
+      }
+      if (coActive(zone) && i === 0) { const z = zone.T[0].p; a.home.set(z.x + (Math.random() - 0.5) * 40, 0, z.z + (Math.random() - 0.5) * 40); a.roamT = 0; return; }
+      // otherwise it roams the swamp at random, wherever the players are: every half minute or so (or once it has
+      // got there) it picks somewhere new 60-160 m away, inside the map and outside the safe zones
+      a.roamT = (a.roamT || 0) - 3;
+      if (a.roamT > 0 && Math.hypot(a.pos.x - a.home.x, a.pos.z - a.home.z) > 20) return;
+      a.roamT = 25 + Math.random() * 30;
+      const lim = W.LIMIT - 40;
+      for (let k = 0; k < 12; k++) {
+        const ang = Math.random() * Math.PI * 2, d = 60 + Math.random() * 100;
+        const x = clamp(a.pos.x + Math.sin(ang) * d, -lim, lim), z = clamp(a.pos.z + Math.cos(ang) * d, -lim, lim);
+        a.home.set(x, 0, z); if (!inSafe(a.home, 6)) break;
+      }
     });
     // a roar somewhere in the dark now and then, so nobody forgets they are out there
     if (!hunting && Math.random() < 0.07 * aggro) { const a = roster.find(x => x.d.root.visible && x.state === 'wander'); if (a) { a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.6, 2.6, a.s); } }
@@ -2349,6 +2385,7 @@
     // (the clip is played k times faster: it covers its own ground, in g / k s)
     const k = clamp(a.speed / c.run.vel[0][1], 0.75, 1.25), g = c.grab / k, J = c.run.jaw;
     const px = tp.pos.x + tv.x * g - a.pos.x, pz = tp.pos.z + tv.z * g - a.pos.z;
+    if (inSafe(hv1.set(px + a.pos.x, 0, pz + a.pos.z), 1)) return false; // they'll be in a safe zone by then
     const along = px * Math.sin(a.heading) + pz * Math.cos(a.heading), side = px * Math.cos(a.heading) - pz * Math.sin(a.heading);
     return along > 0 && along - (clipDist(c.run.vel, c.grab) + J[2]) < 0.4 && Math.abs(side - J[0]) < 2.2;
   }
@@ -2517,6 +2554,7 @@
   function coFx(dt) {
     const me = coMe(), ghost = coGhost(), tw = world.props.tower, ev = CO.ev.t > 0 ? CO.ev.k : '';
     coPhaseFx();
+    world.setSafe(CO.phase === 'm');
     world.props.caches.forEach((c, i) => c.dim = CO.searched.has(i));
     const gm = coM('gen'), humAt = gm && gm.go ? tw.gen : CO.phase === 'esc' && W.SITES.esc === 1 && CO.esc.step >= 1 ? W.SITES.boat : null;
     A.hum(!!humAt, humAt || tw.gen);
@@ -2683,6 +2721,12 @@
     if (ghost && CO.phase === 'm') W.SITES.caches.forEach((c, i) => { if (CO.fuseAt.has(i) && !CO.searched.has(i)) add(c, 'fuse', false); });
     CO.drops.forEach(d => { if (d) add(d, d.k === 'fz' ? 'fuse' : 'crate', false); });
     CO.pings.forEach(p => { const pl = VS.players[p.s]; out.push({ p, ping: p.f ? '#ff4060' : pl ? pl.color : '#9fd8ff' }); });
+    // the safe zones while they are lit: the nearest on the compass, every one on the map (coMinimap adds the rest)
+    if (safeOn() && !ghost) {
+      const vp = P.pos; let best = null, bd = 1e9;
+      W.SITES.safe.forEach(s => { const d = Math.hypot(s.x - vp.x, s.z - vp.z); if (d < bd) { bd = d; best = s; } });
+      if (best && bd > W.SAFE_R) add(best, 'haven', false);
+    }
     return out;
   }
   // the compass: every mark is a drawn pictogram (js/pictos.js); places to take things to and the way out wear a red ring
@@ -2702,6 +2746,7 @@
     mapT -= dt; if (mapT > 0) return; mapT = 1 / 30;
     const L = marks.map(m => m.ping ? { x: m.p.x, z: m.p.z, kind: 'ping', color: m.ping } : { x: m.p.x, z: m.p.z, kind: 'pic', name: m.pic, ring: m.gl ? '#ff6a48' : undefined });
     if (W.SITES && W.SITES.camp && !L.some(m => m.name === 'camp')) L.unshift({ x: W.SITES.camp.x, z: W.SITES.camp.z, kind: 'pic', name: 'camp' });
+    if (safeOn()) W.SITES.safe.forEach(s => { if (!L.some(m => m.name === 'haven' && m.x === s.x && m.z === s.z)) L.unshift({ x: s.x, z: s.z, kind: 'pic', name: 'haven' }); });
     VS.players.forEach(p => {
       if (!p || p.slot === VS.mySlot || p.st === 'gone' || p.st === 'escaped') return;
       L.push({ x: p.tp.pos.x, z: p.tp.pos.z, kind: p.st === 'alive' ? 'mate' : 'ghost', color: p.color, yaw: p.yaw || 0 });

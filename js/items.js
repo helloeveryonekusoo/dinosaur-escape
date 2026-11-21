@@ -174,22 +174,28 @@
       S.sel = 0; S.adren = 0; S.radar = 0; S.camo = 0; S.stim = 0; S.crash = 0;
       const rnd = DG.N.rng(opt.seed != null ? opt.seed : (Math.random() * 1e9) | 0), starts = opt.starts || [W.START], ar = opt.around;
       S.claim = opt.claim || null;
+      const wet = (x, z) => W.height(x, z) < W.WATER + 0.05;
+      const dry = W.WATER > -1e6 ? (x, z) => !wet(x, z) && !wet(x + 1.5, z) && !wet(x - 1.5, z) && !wet(x, z + 1.5) && !wet(x, z - 1.5) : null;
       ORDER.forEach(type => {
         const n = Math.round(countOf(type, df.items) * starts.length * (opt.more || 1));
         for (let i = 0; i < n; i++) {
           let x, z;
-          if (ar) { // anywhere in the disc (area-even), kept inside the map
-            const a = rnd() * Math.PI * 2, d = ar.r * Math.sqrt(rnd()), lim = W.LIMIT - 25;
-            x = Math.max(-lim, Math.min(lim, ar.c.x + Math.sin(a) * d)); z = Math.max(-lim, Math.min(lim, ar.c.z + Math.cos(a) * d));
-          } else { // spread along the route to the goal, with some off to the sides
-            const st = starts[0], f = 0.06 + 0.9 * (i + rnd()) / n, side = (rnd() - 0.5) * (rnd() < 0.3 ? 220 : 90);
-            const rx = W.GOAL.x - st.x, rz = W.GOAL.z - st.z, rl = Math.hypot(rx, rz) || 1;
-            x = THREE.MathUtils.lerp(st.x, W.GOAL.x, f) - rz / rl * side; z = THREE.MathUtils.lerp(st.z, W.GOAL.z, f) + rx / rl * side + (rnd() - 0.5) * 30;
-          }
-          for (let k = 0; k < 20; k++) { const q = W.ravineAt(x, z); if (!q || q.depth < 0.2) break; x += 6; } // not inside a ravine
-          for (const c of (W.colliders || [])) { // not inside a trunk, boulder or log, where it couldn't be reached
-            const dx = x - c.x, dz = z - c.z, d = Math.hypot(dx, dz), m = c.r + 0.7;
-            if (d < m) { const k = d > 1e-3 ? m / d : 0; x = c.x + (k ? dx * k : m); z = c.z + dz * k; }
+          // (a spot in the swamp's pools is drawn again: things only lie on dry ground, at least 1.5 m from the water)
+          for (let tries = 0; tries < 40; tries++) {
+            if (ar) { // anywhere in the disc (area-even), kept inside the map
+              const a = rnd() * Math.PI * 2, d = ar.r * Math.sqrt(rnd()), lim = W.LIMIT - 25;
+              x = Math.max(-lim, Math.min(lim, ar.c.x + Math.sin(a) * d)); z = Math.max(-lim, Math.min(lim, ar.c.z + Math.cos(a) * d));
+            } else { // spread along the route to the goal, with some off to the sides
+              const st = starts[0], f = 0.06 + 0.9 * (i + rnd()) / n, side = (rnd() - 0.5) * (rnd() < 0.3 ? 220 : 90);
+              const rx = W.GOAL.x - st.x, rz = W.GOAL.z - st.z, rl = Math.hypot(rx, rz) || 1;
+              x = THREE.MathUtils.lerp(st.x, W.GOAL.x, f) - rz / rl * side; z = THREE.MathUtils.lerp(st.z, W.GOAL.z, f) + rx / rl * side + (rnd() - 0.5) * 30;
+            }
+            for (let k = 0; k < 20; k++) { const q = W.ravineAt(x, z); if (!q || q.depth < 0.2) break; x += 6; } // not inside a ravine
+            for (const c of (W.colliders || [])) { // not inside a trunk, boulder or log, where it couldn't be reached
+              const dx = x - c.x, dz = z - c.z, d = Math.hypot(dx, dz), m = c.r + 0.7;
+              if (d < m) { const k = d > 1e-3 ? m / d : 0; x = c.x + (k ? dx * k : m); z = c.z + dz * k; }
+            }
+            if (!dry || dry(x, z)) break;
           }
           const mesh = new THREE.Group(), body = mkMesh(type), gl = glow(TYPES[type].glow);
           gl.position.y = 0.25; mesh.add(body, gl); mesh.userData = { body, gl, ph: rnd() * 6 };
