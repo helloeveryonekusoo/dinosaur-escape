@@ -2710,6 +2710,11 @@
     } else gb.style.display = 'none';
     $('tAct').style.display = $('tLight').style.display = ghost ? 'none' : ''; $('tPing').style.display = ghost ? '' : 'none';
     $('tLight').classList.toggle('on', CO.light);
+    // (trial 'phoneHud') on a phone the status line (hidden, crouching...) sits just under the mission panel instead of
+    // on top of it
+    const st = $('status');
+    if (DG.MOBILE && DG.TRIAL.on('phoneHud')) { const pb = document.querySelector('#coop .panel').getBoundingClientRect(); st.style.top = Math.round(pb.bottom + 4) + 'px'; }
+    else st.style.top = '';
   }
   // What the compass and the minimap show in co-op: this stage's mission targets (not the hidden ones), where to take
   // what you carry, the way out, dropped things, pings and signal flares. A ghost sees everything (hidden things and

@@ -176,6 +176,13 @@
   body.touch #inv .key{display:none} body.touch #inv .iname{bottom:46px}
   body.touch #stam{bottom:10px;width:200px}
   body.touch #status{left:calc(12px + env(safe-area-inset-left));top:70px;bottom:auto;font-size:11px;line-height:1.6}
+  /* (trial 'phoneHud') the item bar only between the move stick and the buttons: only what you carry (and the one picked),
+     a little smaller, a second row above when it doesn't fit; in co-op the status line goes under the mission panel (game.js) */
+  body.touch.trial-phoneHud #inv{left:calc(150px + env(safe-area-inset-left));right:calc(166px + env(safe-area-inset-right));transform:none;justify-content:center;flex-wrap:wrap-reverse;gap:5px}
+  body.touch.trial-phoneHud.coop #inv{right:calc(232px + env(safe-area-inset-right))}
+  body.touch.trial-phoneHud #inv .slot{width:36px;height:36px;font-size:19px}
+  body.touch.trial-phoneHud #inv .slot.empty:not(.on){display:none}
+  body.touch.trial-phoneHud #inv .iname{bottom:calc(100% + 4px)}
   body.touch #msg{font-size:15px;letter-spacing:.08em;top:26%;padding:0 12px}
   body.touch #compass{width:260px}
   #rotate{z-index:60;background:#0b0d0a;align-items:center;justify-content:center;text-align:center;font-size:16px;letter-spacing:.15em;line-height:2;pointer-events:auto}
