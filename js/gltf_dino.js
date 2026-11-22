@@ -225,6 +225,8 @@
       return rg ? [rg[0], Math.min(rg[1], clip.duration)] : [0, clip.duration];
     }
     roar(dur) { this.roarT = dur || 2.2; this.oneShot('roar'); }
+    // let the one-shot clip go: it fades out over `fade` s (a catch that came to nothing)
+    endOs(fade) { const o = this.os; if (o) o.dur = Math.min(o.dur, o.t + (fade || 0.3) * (o.rate || 1)); }
     stopOs() { const o = this.os; if (!o) return; o.a.stop(); if (o.lo) { o.lo.stop(); o.rl.stop(); } this.os = null; }
     // moving: a catch started at speed (see `split`); from: start that many seconds into the clip (blended in quickly)
     oneShot(k, moving, from) {

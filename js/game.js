@@ -1014,6 +1014,7 @@
     else if (m.t === 'fx' && m.k === 'it') { if (VS.on && (m.s | 0) !== VS.mySlot && ['cracker', 'flash', 'dyn'].includes(m.i)) items.fxAt(m.i, new V(+m.x, +m.y, +m.z)); }
     else if (m.t === 'give') { if (VS.on) items.give(String(m.k)); }
     else if (m.t === 'revive') { if (VS.on && coGhost()) coRevived(new V(+m.x, +m.y, +m.z)); }
+    else if (m.t === 'fx' && m.k === 'miss') { const a = TREX()[m.i | 0]; if (a && a.catch) coMiss(a, null); }
     else if (m.t === 'fx' && m.k === 'spawn') { A.roar(new V(+m.x, +m.y, +m.z), DG.SPECIES.trex.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${m.n | 0}頭）`, 3); }
     else if (m.t === 'end') showRaceEnd(m.w, m.r || []);
   }
@@ -1197,7 +1198,7 @@
     VS.avatars.forEach(g => {
       const p = VS.players[g.userData.slot]; if (!p) { g.visible = false; return; }
       const held = TREX().find(a => a.catch && a.catch.slot === p.slot); // being caught: still seen standing there until the jaws close
-      g.visible = held ? held.catch.t < grabAt(held, catchInfo(held)) : ((p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive())); // not in our own way when looking through their eyes
+      g.visible = held ? held.catch.t < grabAt(held, catchInfo(held)) || p.st === 'alive' : ((p.st === 'alive' || p.st === 'goal' || (p.st === 'ghost' && (coGhost() || (COOP() && items.inv.medkit > 0 && coMe() && coMe().st === 'alive')))) && !(SPEC.mode === 'fp' && SPEC.slot === p.slot && specActive())); // not in our own way when looking through their eyes
       g.position.x = lerp(g.position.x, p.tp.pos.x, k); g.position.z = lerp(g.position.z, p.tp.pos.z, k);
       const ghost = p.st === 'ghost' && !held, u = g.userData; // (still a person, not yet a ghost, while being caught)
       g.position.y = ghost ? lerp(g.position.y, p.tp.pos.y - 1.65, k) + (u.mix ? Math.sin(performance.now() / 600 + u.slot) * 0.12 : 0) : Math.max(W.height(g.position.x, g.position.z), lerp(g.position.y, p.tp.pos.y - 1.65, k));
@@ -1295,6 +1296,8 @@
   function vsCaught(a, tp) {
     const p = VS.players[tp.slot]; if (!p || p.st !== 'alive') return;
     if (COOP() && inSafe(tp.pos)) return; // safe
+    if (COOP() && a.catch && a.catch.pend) return; // (already going for someone)
+    if (COOP() && catchInfo(a) && DG.TRIAL.on('catchContact')) return coAttempt(a, tp, p);
     if (COOP()) return coCaught(a, tp, p);
     p.st = 'dead'; p.dist = goalDist(tp.pos); p.time = VS.raceT;
     a.attackT = -1; a.feedT = 4; a.state = 'wander'; a.aware = 0.3; a.timer = 4; a.tgtP = null; a.home.copy(a.pos);
@@ -2322,17 +2325,47 @@
   function coCaught(a, tp, p) {
     p.st = 'ghost'; p.time = VS.raceT;
     coDropAll(p, tp.pos); // what they carried falls where it happened
-    a.attackT = -1; a.feedT = 6; a.state = 'wander'; a.aware = 0.3; a.timer = 6; a.tgtP = null; a.home.copy(a.pos);
+    const made = !!(a.catch && a.catch.made && a.catch.slot === p.slot); // (trial 'catchContact': the attempt has reached them)
     const cat = catchInfo(a);
-    if (cat) { // it seizes them, shakes them, dashes them down in front of itself, roars down at them and kills them
+    if (made) { /* the catch is already playing */ }
+    else if (cat) { // it seizes them, shakes them, dashes them down in front of itself, roars down at them and kills them
+      a.attackT = -1; a.state = 'wander'; a.aware = 0.3; a.tgtP = null; a.home.copy(a.pos);
       if (a.speed <= 2) a.heading = Math.atan2(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z); // (on the run it keeps its line)
       a.feedT = a.timer = cat.len + 0.5;
       a.catchN = (a.catchN || 0) + 1; startCatch(a, p.slot);
-    } else { A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s); a.d.roar(2.2); }
+    } else { a.attackT = -1; a.feedT = 6; a.state = 'wander'; a.aware = 0.3; a.timer = 6; a.tgtP = null; a.home.copy(a.pos); A.roar(a.d.headPos(), a.ai.roarPitch * 1.1, 1.6, 1.8, a.s); a.d.roar(2.2); }
     if (tp.local) localCaught(a); else if (p.id) DG.Net.send({ t: 'caught', k: TREX().indexOf(a) }, p.id);
     VS.players.forEach(o => { if (o && o !== p && o.st !== 'gone') tell(o.tp, `${p.name} が沼の捕食者に捕まった…`, 3); });
     CO.dir.lull = 15; CO.dir.chase = 0;
     if (!coAlive().length) coEnd();
+  }
+  // (trial 'catchContact', host) the catch as an attempt: the stalker goes for them (the catch clip starts on every
+  // screen), but they are only caught if they are between its jaws when they close (updateCatches); until then they run
+  // on as before, and can still get away
+  const CATCH_REACH = 1.8; // m, across the ground from the middle of the jaws (some slack for a runner's lag on the net)
+  function coAttempt(a, tp, p) {
+    const cat = catchInfo(a);
+    a.attackT = -1; a.state = 'wander'; a.aware = 0.3; a.tgtP = null; a.home.copy(a.pos);
+    if (a.speed <= 2) a.heading = Math.atan2(tp.pos.x - a.pos.x, tp.pos.z - a.pos.z);
+    a.feedT = a.timer = cat.len + 0.5;
+    a.catchN = (a.catchN || 0) + 1; startCatch(a, p.slot); a.catch.pend = { tp, p };
+    // it commits to where they were going to be as the jaws close (moving as they were when it went for them), and
+    // the neck only makes up a little more than that: a sudden turn sideways gets them out of reach
+    const C = a.catch, run = C.run && cat.run, g = run ? cat.grab / C.k : cat.grab, v = run && a.tpOf === tp && a.tpVel ? a.tpVel : hv0.set(0, 0, 0);
+    C.aimPt = new V(tp.pos.x + v.x * g, 0, tp.pos.z + v.z * g);
+  }
+  const AIM_SLACK = 1.5; // m: how far the neck still follows them from that point
+  // the jaws closed on nothing: they snap shut, the clip is let go, and it stumbles to a stop before it turns again
+  function coMiss(a, p) {
+    const jp = a.d.holdPoint(new V(), true);
+    dropCatchBodies(a.catch); a.catch = null; a.catchSlot = -1; // (catchN is kept: the screens only count new catches)
+    if (a.d.aimRelease) a.d.aimRelease(); if (a.d.endOs) a.d.endOs(0.35);
+    if (VS.host) {
+      a.feedT = 0; a.stun = 1.6; a.attackT = -1; a.state = 'wander'; a.aware = 0.9; a.tgtP = null;
+      DG.Net.broadcast({ t: 'fx', k: 'miss', i: TREX().indexOf(a) });
+      if (p) tell(p.tp, 'かわした！ 捕食者がよろめいている — 今のうちに逃げろ', 2.5);
+    }
+    A.roar(jp, a.ai.roarPitch * 1.9, 0.9, 0.35, a.s); // the jaws snapping shut
   }
   // ---- the catch (a stalker whose model has a 'catch' clip): played the same on every screen ----
   // The caught player watches it from inside: the jaws coming, thrown about in them, a blackout as they are dashed
@@ -2426,13 +2459,26 @@
       // on the run: the clip's own reach brings the open jaws down on them as they close (c.grab); the neck makes up
       // the difference to where they really are, more and more toward the grab, and lets go after it
       if (C.run && C.gT == null) {
-        if (vt && a.d.aimAt) a.d.aimAt(cv2.set(vt.pos.x, gy(vt.pos) + 1.05, vt.pos.z), smooth((C.t - 0.25) / (c.grab - 0.25)));
+        if (vt && a.d.aimAt) {
+          cv2.set(vt.pos.x, gy(vt.pos) + 1.05, vt.pos.z);
+          if (C.aimPt) { const dx = cv2.x - C.aimPt.x, dz = cv2.z - C.aimPt.z, l = Math.hypot(dx, dz), k = l > AIM_SLACK ? AIM_SLACK / l : 1; cv2.x = C.aimPt.x + dx * k; cv2.z = C.aimPt.z + dz * k; } // (trial 'catchContact')
+          a.d.aimAt(cv2, smooth((C.t - 0.25) / (c.grab - 0.25)));
+        }
         if (C.t >= c.grab) { C.gT = c.grab; if (a.d.aimRelease) a.d.aimRelease(); }
       }
       const g = grabAt(a, c), kill = C.t >= c.kill;
+      if (C.pend && C.t >= g) { // (trial 'catchContact', host) the jaws close: is the runner between them?
+        const { tp, p } = C.pend; C.pend = null;
+        const hp = a.d.holdPoint(cv2), reach = Math.hypot(hp.x - tp.pos.x, hp.z - tp.pos.z);
+        C.reach = reach;
+        if (p.st === 'alive' && reach < CATCH_REACH && !inSafe(tp.pos)) { C.made = true; coCaught(a, tp, p); }
+        else { coMiss(a, p); return; }
+      }
+      // (on the other screens, the body is only shown once the host has made the catch: the victim is no longer alive)
+      const vp = VS.players[C.slot], made = !C.pend && !(vp && vp.st === 'alive');
       const jp = a.d.holdPoint(cv1, kill); // held where the teeth meet (the last bite: in the front of the jaws)
       if (C.run && c.run && !kill && C.t < g + c.run.pull) jp.lerp(a.d.holdPoint(cv2, true), 1 - smooth((C.t - g) / c.run.pull)); // taken in the front, pulled in
-      if (once('grab', g)) A.roar(jp, a.ai.roarPitch * 1.7, 1.3, 0.7, a.s);
+      if (made && once('grab', g)) A.roar(jp, a.ai.roarPitch * 1.7, 1.3, 0.7, a.s);
       if (once('drop', c.release)) { // laid down where the front of its jaws will come down for the last bite
         C.spot = c.drop ? a.d.root.localToWorld(cv2.set(0, 0, c.drop / a.d.root.scale.z)).clone() : jp.clone(); C.spot.y = gy(C.spot); A.step(C.spot, 2.4);
       }
@@ -2442,7 +2488,7 @@
       const mine = C.slot === VS.mySlot;
       // taken on the run: from the grab until it is dashed down, the person struggling and flung about in the jaws (the
       // human model's 'Held' clip), hung by the waist from the head as they were taken: upright, facing the way it runs
-      const heldOn = !mine && C.run && c.held && C.t >= g && C.t < c.release;
+      const heldOn = !mine && made && C.run && c.held && C.t >= g && C.t < c.release;
       if (heldOn && !C.held && !C.heldNone) { C.held = heldFigure(c.held); if (C.held) world.scene.add(C.held.g); else C.heldNone = true; }
       if (C.held) {
         const Hf = C.held; Hf.g.visible = heldOn;
@@ -2461,7 +2507,7 @@
       if (!mine && !C.body) { C.body = hurtFigure(); if (C.body) world.scene.add(C.body); }
       const B = C.body;
       if (B) {
-        B.visible = C.t >= g && !(C.held && heldOn);
+        B.visible = made && C.t >= g && !(C.held && heldOn);
         if (B.visible && (C.t < c.release || kill)) { // in the jaws
           a.d.head.getWorldQuaternion(cq0);
           // it hangs from the jaws as it was taken (standing; or lying, for the last bite), held in the head's own frame so
