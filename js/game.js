@@ -1226,13 +1226,67 @@
       if (u.act.Run) u.act.Run.timeScale = clamp(s / HCLIPS.Run, 0.8, 2.1);
       if (u.act.CrouchWalk) u.act.CrouchWalk.timeScale = clamp(s / HCLIPS.CrouchWalk, 0.6, 2.6);
       u.mix.update(dt);
+      mateMotion(g, p, dt);
+    });
+  }
+  // (trial 'mateMotion') a teammate's arms and what is in their hands: carrying (the thing itself, held as it would be:
+  // the fuel can at their side, the egg at the chest, the drone out in front, the injured man across the shoulders) or
+  // working (hands out in front, busy). The walk / run clips still move the rest of the body; the arms are turned (two
+  // bones, a few passes of CCD) so the wrists come to where they should be, blended in and out.
+  const MATE_HANDS = { // wrists, in the figure's own space: x to its right, y up from the feet, -z ahead
+    egg: [[-0.1, 1.1, -0.3], [0.1, 1.1, -0.3]], drone: [[-0.3, 1.02, -0.36], [0.3, 1.02, -0.36]],
+    fuel: [null, [0.27, 0.8, -0.02]], hurt: [[-0.24, 1.5, -0.1], [0.26, 1.46, -0.02]],
+    work: [[-0.16, 0.98, -0.45], [0.16, 0.98, -0.42]]
+  };
+  const mq0 = new THREE.Quaternion(), mq1 = new THREE.Quaternion(), mv0 = new V(), mv1 = new V(), mv2 = new V();
+  function armReach(up, lo, hd, target) {
+    for (let it = 0; it < 4; it++) for (const b of [lo, up]) {
+      const bp = b.getWorldPosition(mv0), a = hd.getWorldPosition(mv1).sub(bp), t = mv2.copy(target).sub(bp);
+      if (a.lengthSq() < 1e-8 || t.lengthSq() < 1e-8) continue;
+      mq0.setFromUnitVectors(a.normalize(), t.normalize()).multiply(b.getWorldQuaternion(mq1));
+      b.quaternion.copy(b.parent.getWorldQuaternion(mq1).invert().multiply(mq0)); b.updateMatrixWorld(true);
+    }
+  }
+  function mateProp(kind) {
+    const g = new THREE.Group(), P0 = DG.PROPS;
+    if (kind === 'fuel') { const o = P0 && P0.get('gascan', 0.48, { fit: 'h' }); if (o) g.add(o); else { const b = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.46, 0.2), new THREE.MeshStandardMaterial({ color: 0xb82a1a })); b.position.y = 0.23; g.add(b); } g.position.set(0.29, 0.34, -0.02); }
+    else if (kind === 'egg') { const o = P0 && P0.get('egg', 0.36, { fit: 'h' }); if (o) g.add(o); else { const e = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd8d0b0 })); e.scale.y = 1.3; e.position.y = 0.18; g.add(e); } g.position.set(0, 0.95, -0.34); }
+    else if (kind === 'drone') { const o = P0 && P0.get('drone', 0.85); if (o) g.add(o); else g.add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.14, 0.8), new THREE.MeshStandardMaterial({ color: 0x2a2e33 }))); g.position.set(0, 0.92, -0.5); }
+    else if (kind === 'hurt') { const o = hurtFigure(); if (!o) return null; o.rotation.set(0, Math.PI / 2, 0); g.add(o); g.position.set(0, 1.36, 0.06); g.rotation.z = 0.08; }
+    else return null;
+    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    return g;
+  }
+  function mateMotion(g, p, dt) {
+    const u = g.userData, on = DG.TRIAL.on('mateMotion') && COOP() && p.st === 'alive';
+    const bag = on ? CO.bag[p.slot] || '' : '', work = on && !bag && (VS.host ? !!p.hold : !!p.hd), pose = bag || (work ? 'work' : '');
+    // what is in their hands
+    if ((u.propK || '') !== bag) {
+      if (u.prop) { g.remove(u.prop); u.prop = null; }
+      u.propK = bag; if (bag) { u.prop = mateProp(bag); if (u.prop) g.add(u.prop); }
+    }
+    if (u.prop) u.prop.visible = g.visible;
+    // the arms
+    if (!u.arm) { const sc = u.mix.getRoot(), f = n => sc.getObjectByName(n); /* (the figure's own bones, not the carried man's) */ u.arm = { l: [f('upperarm_l'), f('lowerarm_l'), f('hand_l')], r: [f('upperarm_r'), f('lowerarm_r'), f('hand_r')], w: 0, k: '' }; }
+    const A = u.arm; if (!A.l[0] || !A.r[0]) return;
+    if (pose) A.k = pose;
+    A.w = lerp(A.w, pose ? 1 : 0, 1 - Math.exp(-dt * 7));
+    if (A.w < 0.01 || !A.k) return;
+    const H = MATE_HANDS[A.k], cr = p.cr ? 0.66 : 1, wob = A.k === 'work' ? 0.04 : 0;
+    g.updateMatrixWorld(true);
+    [['l', 0], ['r', 1]].forEach(([s, i]) => {
+      const h = H[i]; if (!h) return;
+      const [up, lo, hd] = A[s], q0 = up.quaternion.clone(), q1 = lo.quaternion.clone();
+      const tgt = g.localToWorld(new V(h[0], h[1] * cr + wob * Math.sin(T * 7 + i * 2.2), h[2]));
+      armReach(up, lo, hd, tgt);
+      up.quaternion.copy(q0.slerp(up.quaternion, A.w)); lo.quaternion.copy(q1.slerp(lo.quaternion, A.w));
     });
   }
 
   // ---- host: sending the state of the race; guest: applying it ----
   function sendSnap() {
     const p = [];
-    VS.players.forEach(pl => { if (!pl) return; const q = pl.tp.pos; p.push([pl.slot, +q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2), +pl.yaw.toFixed(3), pl.cr ? 1 : 0, ST_CODE[pl.st] | 0, +(pl.pitch || 0).toFixed(3), (pl.slot === VS.mySlot ? coLightOn() : pl.fl) ? 1 : 0]); });
+    VS.players.forEach(pl => { if (!pl) return; const q = pl.tp.pos; p.push([pl.slot, +q.x.toFixed(2), +q.y.toFixed(2), +q.z.toFixed(2), +pl.yaw.toFixed(3), pl.cr ? 1 : 0, ST_CODE[pl.st] | 0, +(pl.pitch || 0).toFixed(3), (pl.slot === VS.mySlot ? coLightOn() : pl.fl) ? 1 : 0, pl.hold ? 1 : 0]); });
     const d = [];
     TREX().forEach((a, k) => {
       if (!a.d.root.visible) return;
@@ -1247,7 +1301,7 @@
     (m.p || []).forEach(e => {
       const pl = VS.players[e[0]]; if (!pl) return;
       if (e[0] === VS.mySlot) { if (CODE_ST[e[6]] === 'escaped' && pl.st === 'alive') { pl.st = 'escaped'; $('coPrompt').style.display = 'none'; } return; } // (co-op: the host decides when I'm on the helicopter)
-      pl.tp.pos.set(e[1], e[2], e[3]); pl.yaw = e[4]; pl.cr = !!e[5]; pl.pitch = +e[7] || 0; pl.fl = !!e[8];
+      pl.tp.pos.set(e[1], e[2], e[3]); pl.yaw = e[4]; pl.cr = !!e[5]; pl.pitch = +e[7] || 0; pl.fl = !!e[8]; pl.hd = !!e[9];
       const st = CODE_ST[e[6]] || 'alive'; if (st !== 'alive' && pl.st === 'alive') pl.dist = goalDist(pl.tp.pos); pl.st = st;
     });
     const trex = TREX(); trex.forEach(a => a.netOn = false);
