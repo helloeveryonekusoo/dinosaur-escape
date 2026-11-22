@@ -73,6 +73,12 @@
   #end p{color:#ccc;letter-spacing:.1em}
   #credits{position:fixed;right:14px;bottom:10px;font-size:11px;color:#999;text-align:right;line-height:1.6;max-width:46vw;pointer-events:auto}
   #credits a{color:#bbb}
+  /* improvements on trial (js/trial.js): a new / old switch for each, on the pause screen */
+  #trialBox{margin-top:18px;padding:8px 12px;border:1px solid rgba(201,162,74,.35);background:rgba(0,0,0,.45);font-size:12px;color:#cfc6ad;max-width:92vw}
+  #trialBox .tt{color:#c9a24a;letter-spacing:.1em;margin-bottom:4px}
+  #trialBox .tr{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:4px}
+  #trialBox .toggle button,#pause #trialBox .toggle button{padding:3px 12px;font-size:12px;margin:0}
+  @media (max-height:560px){ #trialBox{margin-top:8px;padding:5px 10px} }
   #pause{display:none;z-index:25;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
   /* ---- 3-player race ---- */
   #vsLobby{display:none;z-index:28;pointer-events:auto;align-items:center;justify-content:center;background:rgba(0,0,0,.6);overflow-y:auto}
@@ -235,7 +241,8 @@
 <div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
 <div id="pause" class="layer"><h2>PAUSE</h2>
   <div class="sens"><span class="lbl sensLbl">マウス感度</span><input class="sensIn" type="range" min="0.2" max="3" step="0.1" aria-label="感度"><b class="sensVal"></b></div>
-  <button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button></div>
+  <button id="btnResume">再開</button><br><button id="btnQuit">タイトルへ</button>
+  <div id="trialBox"></div></div>
 <div id="end" class="layer"><h2 id="endTitle"></h2><p id="endText"></p><div id="endRank"></div><button id="btnRetry">もう一度</button><br><button id="btnTitle">タイトルへ</button></div>
 <!-- 3-player race: lobby, live standings, countdown -->
 <div id="vsLobby" class="layer">
@@ -289,7 +296,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
-const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/pictos.js','js/minimap.js','js/game.js'];
+const files = ['js/noise.js','js/textures.js','js/dino_geom.js','js/dino_build.js','js/dino_anim.js','js/gltf_dino.js','js/props.js','js/species.js','js/world.js','js/audio.js','js/items.js','js/net.js','js/trial.js','js/pictos.js','js/minimap.js','js/game.js'];
 for (const f of files) {
   await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
 }
