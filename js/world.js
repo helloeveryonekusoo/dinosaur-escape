@@ -761,7 +761,7 @@
     // ---- the swamp: open water, reed beds along it, and the mission sites (co-op) ----
     let reedField = null;
     const props = { caches: [], safe: [], tower: null, camp: null, lz: null, fire: null };
-    let safeLit = true;
+    let safeLit = true, safeEnd = 0;
     if (W.COOP) {
       // still, black water with a faint sheen
       const wg = new THREE.PlaneGeometry(S, S, 1, 1); wg.rotateX(-Math.PI / 2);
@@ -993,8 +993,9 @@
       setTower(on) { if (props.tower) props.tower.on = !!on; },
       // the tunnel gate swings open (k 0..1)
       setGate(k) { if (props.gate) props.gate.rotation.y = k * 1.9; },
-      // co-op: the safe zones' lanterns lit (they keep the stalkers out) or dark
-      setSafe(on) { safeLit = !!on; },
+      // co-op: the safe zones' lanterns lit (they keep the stalkers out) or dark; left > 0: they go out in that many
+      // seconds, blinking faster as it nears
+      setSafe(on, left) { safeLit = !!on; safeEnd = on && left > 0 ? left : 0; },
       // lightning: k (0..1) brightens the whole night for a moment
       flash(k) { flashK = Math.max(flashK, k); },
       // take this map out of the scene and free its GPU memory (geometry, materials, textures, environment map)
@@ -1033,7 +1034,8 @@
             tw.beacon.intensity = 60 * on; tw.halo.material.opacity = 0.9 * on; tw.bulb.material.color.setHex(on > 0.5 ? 0xff4030 : 0x401010);
           }
           props.safe.forEach(z => { // the lanterns flicker; out, they fade to nothing over a second or two
-            const f = 0.85 + 0.15 * Math.sin(t * 8 + z.ph) * Math.sin(t * 2.7 + z.ph * 2);
+            let f = 0.85 + 0.15 * Math.sin(t * 8 + z.ph) * Math.sin(t * 2.7 + z.ph * 2);
+            if (safeEnd > 0) f *= Math.sin(t * Math.PI * (safeEnd > 5 ? 1.2 : safeEnd > 2 ? 2.4 : 4.8)) > -0.2 ? 1 : 0.12; // blinking
             z.k = Math.max(0, Math.min(1, (z.k == null ? 1 : z.k) + (safeLit ? dt : -dt * 0.7)));
             z.light.intensity = 7 * f * z.k; z.ring.material.opacity = 0.4 * z.k; z.ring.visible = z.k > 0.01;
             z.glows.forEach(g => g.material.opacity = 0.8 * f * z.k);

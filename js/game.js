@@ -1642,7 +1642,11 @@
   }
   // the safe zones (world.js W.SITES.safe): while the missions last no stalker can come into one, and nobody in one is
   // hunted; once the way out is opened their lanterns go out and they are open ground like the rest
-  const safeOn = () => VS.on && COOP() && CO.phase === 'm' && !!(W.SITES && W.SITES.safe && W.SITES.safe.length);
+  // (trial 'safeWarn', js/trial.js: when the way out is opened they keep working for SAFE_GRACE s more, lanterns
+  // blinking, and stop as the lanterns go out; the old way they stop at once and the news comes 6.5 s later)
+  const SAFE_GRACE = 10;
+  const safeOn = () => VS.on && COOP() && (CO.phase === 'm' || (CO.phase === 'esc' && CO.safeT > 0)) && !!(W.SITES && W.SITES.safe && W.SITES.safe.length);
+  const coSafeGrace = () => { CO.safeT = SAFE_GRACE; CO.safePh = 'esc'; };
   const inSafe = (p, m) => safeOn() && W.SITES.safe.some(s => Math.hypot(p.x - s.x, p.z - s.z) < W.SAFE_R + (m || 0));
   const coAlive = () => VS.players.filter(p => p && p.st === 'alive');
   const tellAll = (text, dur) => VS.players.forEach(p => { if (p && p.st !== 'gone') tell(p.tp, text, dur); });
@@ -2212,8 +2216,10 @@
         if (CO.stage >= 3) {
           CO.phase = 'esc'; CO.esc = { step: 0, p: 0, t: 0 };
           const e = W.SITES.esc;
-          tellAll(`全ミッション達成！ 今夜の脱出手段は「${ESC_NAME[e]}」— ${e === 0 ? '無線塔で救助ヘリを呼べ' : e === 1 ? '船着き場でボートのエンジンをかけろ' : '湿地の外れの坑道の鉄柵をこじ開けろ'}（コンパスに${ESC_NAME[e]}の印）`, 6);
-          setTimeout(() => { if (VS.on && CO.phase === 'esc') tellAll('安全地帯の明かりが消えた — もう捕食者を防げない', 4); }, 6500);
+          const warn = DG.TRIAL.on('safeWarn');
+          tellAll(`全ミッション達成！ 今夜の脱出手段は「${ESC_NAME[e]}」— ${e === 0 ? '無線塔で救助ヘリを呼べ' : e === 1 ? '船着き場でボートのエンジンをかけろ' : '湿地の外れの坑道の鉄柵をこじ開けろ'}（コンパスに${ESC_NAME[e]}の印）` + (warn ? `。安全地帯は${SAFE_GRACE}秒後に使えなくなる` : ''), 6);
+          if (warn) coSafeGrace(); // (coFx tells everyone when the lanterns go out)
+          else setTimeout(() => { if (VS.on && CO.phase === 'esc') tellAll('安全地帯の明かりが消えた — もう捕食者を防げない', 4); }, 6500);
         } else {
           const nx = CO.ms.filter(M => M.stage === CO.stage).map(M => M.d.name).join('・');
           tellAll(`第${CO.stage + 1}段階：${nx}`, 5);
@@ -2554,7 +2560,10 @@
   function coFx(dt) {
     const me = coMe(), ghost = coGhost(), tw = world.props.tower, ev = CO.ev.t > 0 ? CO.ev.k : '';
     coPhaseFx();
-    world.setSafe(CO.phase === 'm');
+    // the safe zones: lit while the missions last; with the warning, blinking through the grace and out as it ends
+    if (CO.phase !== CO.safePh) { if (CO.phase === 'esc' && CO.safePh === 'm' && !VS.host && DG.TRIAL.on('safeWarn')) coSafeGrace(); if (CO.phase !== 'esc') CO.safeT = 0; CO.safePh = CO.phase; }
+    if (CO.safeT > 0) { CO.safeT = Math.max(0, CO.safeT - dt); if (CO.safeT === 0 && VS.host) tellAll('安全地帯の明かりが消えた — もう捕食者を防げない', 4); }
+    world.setSafe(CO.phase === 'm' || CO.safeT > 0, CO.safeT);
     world.props.caches.forEach((c, i) => c.dim = CO.searched.has(i));
     const gm = coM('gen'), humAt = gm && gm.go ? tw.gen : CO.phase === 'esc' && W.SITES.esc === 1 && CO.esc.step >= 1 ? W.SITES.boat : null;
     A.hum(!!humAt, humAt || tw.gen);
@@ -2686,6 +2695,7 @@
       if (E.step === 0) o += e === 0 ? `無線塔で救助ヘリを呼べ　<b>${Math.round(E.p * 100)}%</b>` : e === 1 ? `船着き場でボートのエンジンをかけろ　<b>${Math.round(E.p * 100)}%</b>` : `坑道の鉄柵をこじ開けろ（2人で同時に）　<b>${Math.round(E.p * 100)}%</b>`;
       else if (E.step === 1) o += e === 0 ? `救助ヘリ到着まで <b>${Math.max(0, Math.ceil(E.t))}</b> 秒 — 生き延びろ` : `エンジンが暖まるまで <b>${Math.max(0, Math.ceil(E.t))}</b> 秒 — 音で奴らが来る`;
       else o += `${e === 0 ? '着陸地点' : e === 1 ? '船着き場' : '坑道'}（赤い煙）へ走れ！　残り <b>${Math.max(0, Math.ceil(E.t))}</b> 秒`;
+      if (CO.safeT > 0) o += `<div class="ev">安全地帯が消えるまで ${Math.ceil(CO.safeT)}秒</div>`;
     } else o = '終了';
     if (CO.ev.t > 0 && EV[CO.ev.k]) o += `<div class="ev">${EV[CO.ev.k][0]}　残り ${Math.ceil(CO.ev.t)}秒</div>`;
     if (me && me.st === 'escaped') o += `<br><span style="color:#c9e6a0">脱出済み — 仲間を見守ろう</span>`;

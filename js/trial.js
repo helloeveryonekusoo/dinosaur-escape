@@ -4,6 +4,7 @@
 // DG.TRIAL.on(key) -> true when the new version is in use.
 (function () {
   const LIST = [
+    { key: 'safeWarn', name: '安全地帯の予告', desc: '新：脱出の段階に入ると「あと10秒で消える」と知らせ、ランタンが点滅してから消える（消えた時に守られなくなる）／ 旧：すぐに守られなくなり、6.5秒後に知らせる（協力・ホストの設定で決まる）' },
   ];
   const KEY = 'dg_trial';
   let st = {};
