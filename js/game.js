@@ -528,10 +528,21 @@
     if (items.camo > 0) st.push(`🟫 迷彩中 ${items.camo.toFixed(0)}秒`);
     if (items.radar > 0) st.push(`📡 探知中 ${items.radar.toFixed(0)}秒 — ` + dinos.filter(a => a.d.root.visible).map(a => Math.round(a.pos.distanceTo(P.pos)) + 'm' + (a.tranq > 0 ? '（麻酔）' : '') + (a.state === 'eat' ? '（食事中）' : a.state === 'fixate' ? '（発煙筒に釘付け）' : a.state === 'investigate' ? '（移動中）' : a.state === 'chase' ? '（追跡中！）' : '')).join(' / '));
     $('status').innerHTML = st.join('<br>');
+    stealthHud(dt);
     P.wasSprint = sprint;
     return sprint;
   }
 
+  // (trial 'stealthMeter') the meter under the crosshair: footsteps (P.noise 0..1) and how easily seen (P.vis: 1 standing
+  // in the open; lower crouched, in ferns, with camouflage, torch off at night). It rises at once and falls back slowly,
+  // so a single loud step still shows. Shown only while this function runs (the player in play), see tick.
+  let smN = 0, smV = 0, smAge = 9;
+  function stealthHud(dt) {
+    smAge = 0; if (!DG.TRIAL.on('stealthMeter')) return;
+    smN = Math.max(P.noise, smN - dt * 0.8); smV = Math.max(P.vis / 1.15, smV - dt * 1.5);
+    const set = (id, k) => { const n = k <= 0.02 ? 0 : Math.max(1, Math.ceil(clamp(k, 0, 1) * 5)), c = n >= 5 ? 'l3' : n >= 3 ? 'l2' : 'l1'; $(id).querySelectorAll('b').forEach((b, i) => b.className = i < n ? c : ''); };
+    set('smN', smN); set('smV', smV);
+  }
   // ---------------- dinosaur AI ----------------
   const tv = new V();
   // Whom a dinosaur is after. In a single game that is always the player (LOCAL). In a race the host runs every
@@ -2821,7 +2832,7 @@
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   function tick(dt) {
-    T += dt; if (DG.MOBILE) touchUI();
+    T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();
     if (VS.on) { versusTick(dt); renderer.render(world.scene, camera); return; }
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
