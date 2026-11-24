@@ -138,8 +138,9 @@
     SEED = seed | 0; W.seed = SEED; W.VERSUS = versus; W.COOP = coop;
     Object.assign(W, versus ? RACE_MAP : coop ? COOP_MAP : SOLO_MAP);
     W.WATER = coop ? -0.55 : -1e9; W.SITES = null;
+    W.BRIDGES = []; W.BR_DOWN = []; W.BR_LIVE = false;
     if (versus) W.STARTS = placeRace();
-    else if (coop) W.STARTS = placeCoop();
+    else if (coop) { W.STARTS = placeCoop(); if (W.BR_ON) { W.BRIDGES = placeBridges(); W.BR_DOWN = W.BRIDGES.map(() => 0); } }
     else { W.GOAL.copy(W.GOAL_SOLO); W.STARTS = [W.START]; }
     W.RAVINES = coop ? [] : makeRavines(versus);
   };
@@ -202,8 +203,57 @@
         if (d < 16) h = Math.min(h, h + (-1.6 - h) * (1 - N.smoothstep(7, 16, d)));
       }
     }
+    return W.BR_LIVE ? deckH(x, z, h) : h;
+  }
+  // ---- (trial 'shortcut', game.js) wooden drawbridges over the swamp's pools: a boardwalk across 18-40 m of open
+  // water whose middle span stands raised until two people wind it down together (at a winch on either bank). Laid out
+  // from the seed, only when W.BR_ON (set by the game before W.reseed). The deck is walked on (W.height) only while a
+  // game runs (W.BR_LIVE: the terrain and plants are made without it), its middle span once it is down (W.BR_DOWN[i] = 1).
+  W.DECK_HW = 0.85; W.BRIDGES = []; W.BR_DOWN = []; W.BR_LIVE = false;
+  function placeBridges() {
+    const rr = N.rng(1307 + SEED), S = W.SITES, out = [], lim = W.LIMIT - 45, dry = (x, z) => swampHeight(x, z) > W.WATER + 0.15;
+    const avoid = [S.camp, S.tower, S.lz, S.boat, ...S.caches, ...S.spots, ...S.safe];
+    // from a point on dry ground, each of 16 ways out: open water within 4 m, then 18-42 m of it (nearly all water),
+    // then dry ground again
+    const across = (ax, az, dx, dz) => {
+      let ws = -1, n = 0, wet = 0;
+      for (let s = 0.5; s < 50; s += 0.5) {
+        const h = swampHeight(ax + dx * s, az + dz * s);
+        if (ws < 0) { if (h < W.WATER - 0.1) ws = s; else if (s > 4) return null; continue; }
+        n++; if (h < W.WATER) wet++;
+        if (h > W.WATER + 0.15 && dry(ax + dx * (s + 1.5), az + dz * (s + 1.5))) return s - ws >= 18 && s - ws <= 42 && wet >= n * 0.85 ? [ws, s] : null;
+      }
+      return null;
+    };
+    for (let tries = 0; out.length < 3 && tries < 1500; tries++) {
+      const ax = (rr() * 2 - 1) * lim, az = (rr() * 2 - 1) * lim, a0 = rr() * Math.PI * 2;
+      if (!dry(ax, az) || out.some(o => Math.hypot(o.mid.x - ax, o.mid.z - az) < 110)) continue;
+      let f = null, dx = 0, dz = 0;
+      for (let k = 0; k < 16 && !f; k++) { dx = Math.sin(a0 + k * 0.3927); dz = Math.cos(a0 + k * 0.3927); f = across(ax, az, dx, dz); }
+      if (!f) continue;
+      const [ws, we] = f, s0 = Math.max(0, ws - 2.5), s1 = we + 2.5, a = new V(ax + dx * s0, 0, az + dz * s0), b = new V(ax + dx * s1, 0, az + dz * s1);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      if (avoid.some(p => Math.hypot(p.x - mid.x, p.z - mid.z) < 36 || Math.hypot(p.x - a.x, p.z - a.z) < 20 || Math.hypot(p.x - b.x, p.z - b.z) < 20)) continue;
+      if (out.some(o => Math.hypot(o.mid.x - mid.x, o.mid.z - mid.z) < 130)) continue;
+      const len = s1 - s0, gap = Math.min(10, len * 0.34), g0 = (len - gap) / 2, side = new V(dz, 0, -dx), fw = new V(dx, 0, dz);
+      out.push({ i: out.length, a, b, mid, dx, dz, len, g0, g1: g0 + gap, y: W.WATER + 0.5,
+        box: [Math.min(a.x, b.x) - 3, Math.max(a.x, b.x) + 3, Math.min(a.z, b.z) - 3, Math.max(a.z, b.z) + 3],
+        w: [a.clone().addScaledVector(side, 1.7).addScaledVector(fw, 0.8), b.clone().addScaledVector(side, 1.7).addScaledVector(fw, -0.8)] }); // the winches
+    }
+    return out;
+  }
+  function deckH(x, z, h) {
+    for (const b of W.BRIDGES) {
+      if (x < b.box[0] || x > b.box[1] || z < b.box[2] || z > b.box[3]) continue;
+      const rx = x - b.a.x, rz = z - b.a.z, t = rx * b.dx + rz * b.dz;
+      if (t < 0 || t > b.len || Math.abs(rx * b.dz - rz * b.dx) > W.DECK_HW) continue;
+      if (t > b.g0 && t < b.g1 && !(W.BR_DOWN[b.i] >= 1)) continue; // the raised span: a gap
+      if (b.y > h) h = b.y;
+    }
     return h;
   }
+  // distance across from a bridge's line, when along it (else Infinity): to keep the plants off it
+  const nearBridge = (x, z, m) => W.BRIDGES.some(b => { const rx = x - b.a.x, rz = z - b.a.z, t = rx * b.dx + rz * b.dz; return t > -m && t < b.len + m && Math.abs(rx * b.dz - rz * b.dx) < W.DECK_HW + m; });
   // depth of water at (x, z): > 0 in a pool
   W.waterDepth = (x, z) => W.WATER - W.height(x, z);
   W.height = function (x, z) {
@@ -528,6 +578,7 @@
       if (Math.hypot(x - W.GOAL.x, z - W.GOAL.z) < clear) return false;
       for (const p of SITE_LIST) if (Math.hypot(x - p.x, z - p.z) < Math.max(clear, 9)) return false;
       for (const p of SAFE_LIST) if (Math.hypot(x - p.x, z - p.z) < Math.max(clear, W.SAFE_R + 3.5)) return false; // the safe zones stay open
+      if (W.BRIDGES.length && nearBridge(x, z, 2.5)) return false; // (and the drawbridges)
       if (W.COOP && !wet && W.height(x, z) < W.WATER + 0.08) return false;
       // the glade at the start, where the title screen shows the dinosaur off: nothing taller than ferns grows there
       if (clear >= 10 && !W.VERSUS && !W.COOP && Math.hypot(x - W.START.x, z - (W.START.z - 12)) < 34) return false;
@@ -760,7 +811,7 @@
 
     // ---- the swamp: open water, reed beds along it, and the mission sites (co-op) ----
     let reedField = null;
-    const props = { caches: [], safe: [], tower: null, camp: null, lz: null, fire: null };
+    const props = { caches: [], safe: [], tower: null, camp: null, lz: null, fire: null, br: [] };
     let safeLit = true, safeEnd = 0;
     if (W.COOP) {
       // still, black water with a faint sheen
@@ -891,6 +942,45 @@
         g.traverse(o => { if (o.isMesh && !cores.includes(o) && o !== ring) { o.castShadow = true; o.receiveShadow = true; } });
         scene.add(g); props.safe.push({ group: g, cores, glows, ring, light, ph: rnd() * 6 });
       });
+      // (trial 'shortcut') the drawbridges: planks on two stringers and posts, the middle span hinged at its near end
+      // and standing raised (world.setBridge), a winch with a lantern on each bank, a rope from the near winch to the tip
+      W.BRIDGES.forEach(b => {
+        const g = new THREE.Group(); g.position.set(b.a.x, 0, b.a.z); g.rotation.y = Math.atan2(b.dx, b.dz); // local +z along it, +x to its side
+        const wood = mat(0x7a5e3e, { roughness: 0.95 }), dark = mat(0x4a3826), HW = W.DECK_HW, y = b.y;
+        const pg = new THREE.BoxGeometry(HW * 2, 0.07, 0.36);
+        const planks = (parent, t0, t1, y0) => {
+          const n = Math.max(1, Math.floor((t1 - t0) / 0.44)), im = new THREE.InstancedMesh(pg, wood, n), d = new THREE.Object3D();
+          for (let i = 0; i < n; i++) { d.position.set((rnd() - 0.5) * 0.04, y0 - 0.035 + (rnd() - 0.5) * 0.02, t0 + 0.22 + i * (t1 - t0) / n); d.rotation.set(0, (rnd() - 0.5) * 0.05, (rnd() - 0.5) * 0.03); d.updateMatrix(); im.setMatrixAt(i, d.matrix); }
+          im.castShadow = true; im.receiveShadow = true; parent.add(im);
+          [-0.62, 0.62].forEach(x => { const s = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, t1 - t0), dark); s.position.set(x, y0 - 0.15, (t0 + t1) / 2); parent.add(s); });
+        };
+        const post = (t, x) => { const h = y - (W.WATER - 1.6), p = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, h, 6), dark); p.position.set(x, y - 0.12 - h / 2, t); g.add(p); };
+        planks(g, 0, b.g0, y); planks(g, b.g1, b.len, y);
+        for (let t = 1.5; t < b.len - 1; t += 3) if (t < b.g0 - 0.3 || t > b.g1 + 0.3) { post(t, -0.75); post(t, 0.75); }
+        [b.g0, b.g1].forEach(t => { post(t, -0.75); post(t, 0.75); }); // the gap's ends
+        const hinge = new THREE.Group(); hinge.position.set(0, y, b.g0); g.add(hinge); planks(hinge, 0, b.g1 - b.g0, 0);
+        // the winches
+        const lamps = [];
+        b.w.forEach((w, k) => {
+          const wg = new THREE.Group(), gy = W.height(w.x, w.z); wg.position.set(w.x, gy, w.z); wg.rotation.y = g.rotation.y;
+          [-0.32, 0.32].forEach(x => { const p = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.0, 0.12), dark); p.position.set(x, 0.5, 0); wg.add(p); });
+          const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.56, 10), wood); drum.rotation.z = Math.PI / 2; drum.position.y = 0.82; wg.add(drum);
+          const crank = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.36, 0.05), mat(0x8a8a86, { metalness: 0.6, roughness: 0.4 })); crank.position.set(0.4, 0.82, 0.12); wg.add(crank);
+          const lp = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.9, 5), dark); lp.position.set(-0.55, 0.95, 0); wg.add(lp);
+          const lm = model(wg, 'lantern', 0.36, -0.55, 1.9, 0, { fit: 'h' });
+          const core = new THREE.Mesh(new THREE.SphereGeometry(lm ? 0.05 : 0.1, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd28a })); core.position.set(-0.55, lm ? 2.06 : 2.0, 0); wg.add(core);
+          const gl = glowSprite(0xffb860, 2.2); gl.position.copy(core.position); wg.add(gl); lamps.push(gl);
+          wg.traverse(o => { if (o.isMesh && o !== core) { o.castShadow = true; o.receiveShadow = true; } });
+          scene.add(wg); colliders.push({ x: w.x, z: w.z, r: 0.35 });
+          wg.userData.crank = crank;
+          b['wg' + k] = wg;
+        });
+        const rope = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V(), new V()]), new THREE.LineBasicMaterial({ color: 0xb8a882 }));
+        rope.frustumCulled = false; scene.add(rope);
+        g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        scene.add(g); g.updateMatrixWorld(true);
+        props.br.push({ b, g, hinge, rope, lamps, k: 0, kv: 0 });
+      });
       // the way out (only the one this game uses is built); the red flare is lit when it is time to board
       const ES = W.SITES, l = ES.lz, face = Math.atan2(ES.out.x, ES.out.z);
       if (ES.esc === 0) { // landing zone: a ring of stakes round a flattened clearing
@@ -996,6 +1086,8 @@
       // co-op: the safe zones' lanterns lit (they keep the stalkers out) or dark; left > 0: they go out in that many
       // seconds, blinking faster as it nears
       setSafe(on, left) { safeLit = !!on; safeEnd = on && left > 0 ? left : 0; },
+      // (trial 'shortcut') a drawbridge's span wound down by k (0 raised .. 1 down)
+      setBridge(i, k) { const p = props.br[i]; if (p) p.k = k; },
       // lightning: k (0..1) brightens the whole night for a moment
       flash(k) { flashK = Math.max(flashK, k); },
       // take this map out of the scene and free its GPU memory (geometry, materials, textures, environment map)
@@ -1043,6 +1135,17 @@
           });
           motes.material.opacity = 0.55 + 0.35 * Math.sin(t * 2.3);
           if (props.boat) { props.boat.position.y = W.WATER + 0.05 + Math.sin(t * 1.3) * 0.05; props.boat.rotation.z = Math.sin(t * 0.9) * 0.03; }
+          props.br.forEach(p => { // the drawbridges: the span follows the winding; the rope runs from the near winch to its tip
+            const moving = Math.abs(p.k - p.kv) > 1e-3; p.kv += (p.k - p.kv) * Math.min(1, dt * 3);
+            p.hinge.rotation.x = -(1 - p.kv) * 1.25;
+            if (moving) [p.b.wg0, p.b.wg1].forEach(w => { if (w) w.userData.crank.rotation.x = p.kv * 40; });
+            p.rope.visible = p.kv < 0.98;
+            if (p.rope.visible) {
+              const a = p.rope.geometry.attributes.position, w = p.b.wg0, tip = new V(0, 0.05, p.b.g1 - p.b.g0);
+              p.hinge.localToWorld(tip); a.setXYZ(0, w.position.x, w.position.y + 0.85, w.position.z); a.setXYZ(1, tip.x, tip.y, tip.z); a.needsUpdate = true;
+            }
+            p.lamps.forEach((g, k) => g.material.opacity = 0.7 + 0.2 * Math.sin(t * 7 + k * 2 + p.b.i));
+          });
         }
         sun.position.copy(focus).addScaledVector(sunDir, 175); sun.target.position.copy(focus);
         // draw only the chunks near enough to be seen through the fog

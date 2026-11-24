@@ -1057,7 +1057,7 @@
     $('loading').style.display = ''; setLoad(0.4, COOP() ? '夜の湿地を生成中' : '対戦用の森を生成中'); await frame(); await frame();
     coCleanup();
     const scene = world.scene;
-    world.dispose(); W.reseed(seed, COOP() ? 'coop' : true);
+    world.dispose(); W.BR_ON = COOP() && DG.TRIAL.on('shortcut'); W.reseed(seed, COOP() ? 'coop' : true); // (trial 'shortcut': the drawbridges)
     world = W.create(renderer, { scene, layout: { veg: 1, fern: 1 } });
     dinos.forEach(a => { a.d.ground = W.height; });
     if (COOP()) coLightsMake(); // before compiling, so the flashlights don't recompile every shader mid-game
@@ -1712,7 +1712,7 @@
     fuseAt: new Set(), searched: new Set(), cs: [0, 0, 0, 0, 0, 0],
     drops: [], pings: [], traps: [], ev: { k: '', t: 0, next: 80 },
     dir: { t: 0, calm: 0, chase: 0, lull: 0 }, light: true, hold: '', pingCD: 0, boltT: 20, growlT: 3, beepT: 0, lureT: {},
-    lights: null, rain: null, marks: null, wire: null, prevKey: '', hudT: 0, flashT: 0, lone: 0, loneT: [0, 0, 0, 0], loneCD: [0, 0, 0, 0]
+    lights: null, rain: null, marks: null, wire: null, prevKey: '', hudT: 0, flashT: 0, lone: 0, loneT: [0, 0, 0, 0], loneCD: [0, 0, 0, 0], br: []
   };
   // the co-op difficulty: the same dials, but a fixed number of stalkers there from the start, never more: one on the
   // easy level, three on the hardest, two otherwise
@@ -1964,7 +1964,7 @@
     dinos.forEach(a => { if (a.catch) clearCatch(a); }); VS.dead = null; resetScreenFx();
     document.body.classList.remove('coop', 'ghost');
     $('coop').style.display = 'none'; $('goal').style.display = ''; $('coPrompt').style.display = 'none'; $('coGhost').style.display = 'none'; $('coFlash').style.opacity = 0;
-    CO.hold = ''; CO.pings = []; CO.drops = []; CO.traps = []; CO.ms = []; P.hook = null; P.slide = 0;
+    CO.hold = ''; CO.pings = []; CO.drops = []; CO.traps = []; CO.ms = []; P.hook = null; P.slide = 0; W.BR_LIVE = false;
   }
 
   // ---- starting ----
@@ -1987,6 +1987,7 @@
       light: true, hold: '', pingCD: 0, boltT: 15 + Math.random() * 10, growlT: 4, beepT: 0, lureT: {}, prevKey: '', hudT: 0, flashT: 0,
       lone: 0, loneT: [0, 0, 0, 0], loneCD: [0, 0, 0, 0] });
     CO.dir = { t: 10, calm: 0, chase: 0, lull: 0 };
+    W.BR_DOWN = W.BRIDGES.map(() => 0); W.BR_LIVE = W.BRIDGES.length > 0; CO.br = W.BRIDGES.map(() => 0);
     coBuild(n);
     // pickups all over the swamp, one set for the whole team (the co-op set of items); a firecracker each to start,
     // and darts for everyone when the tranquilizer mission is drawn
@@ -2078,6 +2079,10 @@
       }
     }
     for (let i = 0; i < 6; i++) if (!CO.searched.has(i) && near(world.props.caches[i].pos, 2.3)) return { id: 'c' + i, text: '木箱を調べる', prog: CO.cs[i] };
+    for (let i = 0; i < W.BRIDGES.length; i++) { // (trial 'shortcut') a drawbridge's winch
+      if (!(CO.br[i] < 1) || !W.BRIDGES[i].w.some(w => near(w, 2.6))) continue;
+      return coAlive().length > 1 ? { id: 'b' + i, text: '跳ね橋のウインチを回す（2人で同時に）', prog: CO.br[i] } : { text: '跳ね橋のウインチ — 1人では回らない' };
+    }
     return null;
   }
   function coLocal() {
@@ -2308,7 +2313,7 @@
         CO.drops[i] = null; tell(p.tp, `落ちていた${d.k === 'fz' ? 'ヒューズ' : BAG_NAME[d.k]}を拾った`, 2.5);
         return;
       }
-      if (h === 'x') return; // the way out: see coEscape
+      if (h === 'x' || h[0] === 'b') return; // the way out: see coEscape; a drawbridge: coBridges
       const m = /^m(\d)\.(\d)$/.exec(h); if (!m) return;
       const M = CO.ms[+m[1]], ti = +m[2]; if (!coActive(M)) return;
       const d = M.d, t = M.T[ti];
@@ -2401,6 +2406,16 @@
     if (d.kind === 'fuse' && M.v >= M.need) M.done = true;
     if (M.done) tellAll(`ミッション達成：${d.name}`, 3);
   }
+  // (trial 'shortcut') host: a drawbridge comes down while two (or more) survivors wind its winches at once, over 4 s;
+  // the creak carries. Left alone it slips back a little. Once down it stays down.
+  function coBridges(dt, alive) {
+    W.BRIDGES.forEach((b, i) => {
+      if (CO.br[i] >= 1) return;
+      const n = alive.filter(p => p.hold === 'b' + i && b.w.some(w => nearP(p, w, 2.6))).length;
+      if (n >= 2) { CO.br[i] = Math.min(1, CO.br[i] + dt / 4); coLure('br' + i, 3, b.mid, 70); if (CO.br[i] >= 1) tellAll('跳ね橋が下りた！ 水に入らずに静かに渡れる', 3); }
+      else CO.br[i] = Math.max(0, CO.br[i] - dt * 0.05);
+    });
+  }
   function coDartHit() { const M = coM('tranq'); if (coActive(M)) { M.v++; tellAll(`麻酔弾が命中（${Math.min(M.v, M.need)}/${M.need}）`, 2.5); } }
   function coMission(dt, alive) {
     VS.dtHost = dt;
@@ -2424,6 +2439,7 @@
         }
       }
     } else if (CO.phase === 'esc') coEscape(dt, alive);
+    coBridges(dt, alive);
     // traps on the ground: a stalker that steps in one is held fast
     CO.traps.forEach(t => {
       if (t.sp) { t.sp += dt; return; }
@@ -2787,7 +2803,7 @@
       se, cs: CO.cs.map(v => Math.round(v * 100)), ev: [EVK.indexOf(CO.ev.k), Math.ceil(CO.ev.t)],
       dr: CO.drops.map(d => d ? [+d.x.toFixed(1), +d.z.toFixed(1), d.k === 'fz' ? 0 : BAG.indexOf(d.k), d.n, Math.round(d.p * 100)] : 0),
       tr: CO.traps.map(t => [t.id, +t.x.toFixed(1), +t.z.toFixed(1), t.sp ? 1 : 0]),
-      pg: CO.pings.map(p => [p.id, +p.x.toFixed(1), +p.z.toFixed(1), p.s, +p.ttl.toFixed(1), p.f]) };
+      pg: CO.pings.map(p => [p.id, +p.x.toFixed(1), +p.z.toFixed(1), p.s, +p.ttl.toFixed(1), p.f]), br: CO.br.map(v => Math.round(v * 100)) };
   }
   function coApply(c) {
     CO.phase = CO_PH[c.ph] || 'm'; CO.stage = c.sg | 0;
@@ -2800,6 +2816,7 @@
     CO.drops = (c.dr || []).map(d => d ? { x: +d[0], z: +d[1], k: d[2] ? BAG[d[2]] : 'fz', n: d[3] | 0, p: (d[4] | 0) / 100 } : null);
     CO.traps = (c.tr || []).map(t => ({ id: t[0] | 0, x: +t[1], z: +t[2], sp: t[3] | 0 }));
     CO.pings = (c.pg || []).map(p => ({ id: p[0] | 0, x: +p[1], z: +p[2], s: p[3] | 0, ttl: +p[4], f: p[5] | 0 }));
+    if (c.br) CO.br = W.BRIDGES.map((_, i) => (c.br[i] | 0) / 100);
   }
   function coBolt(delay) { // lightning: two quick flashes, then thunder
     world.flash(1); setTimeout(() => { if (VS.on) world.flash(0.7); }, 140);
@@ -2816,6 +2833,7 @@
     if (CO.safeT > 0) { CO.safeT = Math.max(0, CO.safeT - dt); if (CO.safeT === 0 && VS.host) tellAll('安全地帯の明かりが消えた — もう捕食者を防げない', 4); }
     world.setSafe(CO.phase === 'm' || CO.safeT > 0, CO.safeT);
     world.props.caches.forEach((c, i) => c.dim = CO.searched.has(i));
+    W.BRIDGES.forEach((b, i) => { const k = CO.br[i] || 0; world.setBridge(i, k); W.BR_DOWN[i] = k >= 1 ? 1 : 0; });
     const gm = coM('gen'), humAt = gm && gm.go ? tw.gen : CO.phase === 'esc' && W.SITES.esc === 1 && CO.esc.step >= 1 ? W.SITES.boat : null;
     A.hum(!!humAt, humAt || tw.gen);
     // the nearest stalker (for the flicker and the growl)
@@ -3018,6 +3036,7 @@
     const L = marks.map(m => m.ping ? { x: m.p.x, z: m.p.z, kind: 'ping', color: m.ping } : { x: m.p.x, z: m.p.z, kind: 'pic', name: m.pic, ring: m.gl ? '#ff6a48' : undefined });
     if (W.SITES && W.SITES.camp && !L.some(m => m.name === 'camp')) L.unshift({ x: W.SITES.camp.x, z: W.SITES.camp.z, kind: 'pic', name: 'camp' });
     if (safeOn()) W.SITES.safe.forEach(s => { if (!L.some(m => m.name === 'haven' && m.x === s.x && m.z === s.z)) L.unshift({ x: s.x, z: s.z, kind: 'pic', name: 'haven' }); });
+    W.BRIDGES.forEach((b, i) => L.unshift({ x: b.mid.x, z: b.mid.z, kind: 'pic', name: 'bridge', ring: CO.br[i] >= 1 ? '#8ad87a' : undefined })); // (trial 'shortcut')
     VS.players.forEach(p => {
       if (!p || p.slot === VS.mySlot || p.st === 'gone' || p.st === 'escaped') return;
       L.push({ x: p.tp.pos.x, z: p.tp.pos.z, kind: p.st === 'alive' ? 'mate' : 'ghost', color: p.color, yaw: p.yaw || 0 });
