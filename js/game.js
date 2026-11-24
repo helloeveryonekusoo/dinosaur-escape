@@ -525,6 +525,7 @@
     if (items.adren > 0) st.push(`💉 アドレナリン ${items.adren.toFixed(0)}秒`);
     if (stim) st.push(`💊 興奮剤 ${items.stim.toFixed(0)}秒`); if (crash) st.push(`💊 反動で足が重い ${items.crash.toFixed(0)}秒`);
     if (bag) st.push(`${BAG_NAME[bag]}を運んでいる${heavy ? '（重くて走れない）' : '（匂いで狙われやすい）'}`);
+    if (co && coLone(coMe())) st.push('👤 ひとりきり — 気付かれやすい（仲間のそばへ）');
     if (P.slide > 0) st.push('スライディング');
     if (items.camo > 0) st.push(`🟫 迷彩中 ${items.camo.toFixed(0)}秒`);
     if (items.radar > 0) st.push(`📡 探知中 ${items.radar.toFixed(0)}秒 — ` + dinos.filter(a => a.d.root.visible).map(a => Math.round(a.pos.distanceTo(P.pos)) + 'm' + (a.tranq > 0 ? '（麻酔）' : '') + (a.state === 'eat' ? '（食事中）' : a.state === 'fixate' ? '（発煙筒に釘付け）' : a.state === 'investigate' ? '（移動中）' : a.state === 'chase' ? '（追跡中！）' : '')).join(' / '));
@@ -557,6 +558,7 @@
     const ck = VS.on && COOP() ? coSenseK() : null; // co-op: fog dims its eyes, a storm drowns footsteps, the calm carries them
     const sr = ai.sight * DF.sense * tp.vis * (ck ? ck[0] : 1); if (dist < sr && rel < 1.7) gain += (1.6 * (1 - dist / sr) + 0.2) * (flareLured ? 0.12 : 1); // eyes on the light
     const hr = ai.hear * DF.sense * tp.noise * (ck ? ck[1] : 1); if (dist < hr && !flareLured) gain += 2.2 * (1 - dist / hr) + 0.2;
+    if (VS.on && COOP() && tp.slot != null && (CO.lone & (1 << tp.slot))) gain *= LONE_K; // (trial 'loneTarget') alone: easier to notice
     if (a.state === 'eat') gain *= 0.35; // busy eating: much less attentive
     if (dist < 6 * ai.size + 3) gain += 1.5; // right next to it: always noticed
     if (a.blind > 0) gain *= 0.05; // dazzled by a flashbang
@@ -1702,7 +1704,7 @@
     fuseAt: new Set(), searched: new Set(), cs: [0, 0, 0, 0, 0, 0],
     drops: [], pings: [], traps: [], ev: { k: '', t: 0, next: 80 },
     dir: { t: 0, calm: 0, chase: 0, lull: 0 }, light: true, hold: '', pingCD: 0, boltT: 20, growlT: 3, beepT: 0, lureT: {},
-    lights: null, rain: null, marks: null, wire: null, prevKey: '', hudT: 0, flashT: 0
+    lights: null, rain: null, marks: null, wire: null, prevKey: '', hudT: 0, flashT: 0, lone: 0, loneT: [0, 0, 0, 0], loneCD: [0, 0, 0, 0]
   };
   // the co-op difficulty: the same dials, but a fixed number of stalkers there from the start, never more: one on the
   // easy level, three on the hardest, two otherwise
@@ -1947,7 +1949,8 @@
     const n = VS.players.filter(Boolean).length;
     Object.assign(CO, { phase: 'm', stage: 0, esc: { step: 0, p: 0, t: 0 }, fz: [0, 0, 0, 0], bag: ['', '', '', ''], know: 0, rd: [0, 0, 0, 0],
       searched: new Set(), cs: [0, 0, 0, 0, 0, 0], drops: [], pings: [], traps: [], ev: { k: '', t: 0, next: 70 + Math.random() * 40 },
-      light: true, hold: '', pingCD: 0, boltT: 15 + Math.random() * 10, growlT: 4, beepT: 0, lureT: {}, prevKey: '', hudT: 0, flashT: 0 });
+      light: true, hold: '', pingCD: 0, boltT: 15 + Math.random() * 10, growlT: 4, beepT: 0, lureT: {}, prevKey: '', hudT: 0, flashT: 0,
+      lone: 0, loneT: [0, 0, 0, 0], loneCD: [0, 0, 0, 0] });
     CO.dir = { t: 10, calm: 0, chase: 0, lull: 0 };
     coBuild(n);
     // pickups all over the swamp, one set for the whole team (the co-op set of items); a firecracker each to start,
@@ -2079,6 +2082,14 @@
     }
     tell(a.tp, `${b.name}に${name}を渡した`, 2);
     if (what === 'bag' || what === 'fz') tell(b.tp, `${a.name}から${name}を受け取った`, 2.5);
+  }
+  // (trial 'loneTarget') a survivor with nobody else alive within LONE_R (and out of the safe zones): the stalkers notice
+  // them LONE_K times as readily, and after LONE_T s alone the nearest roaming one drifts their way
+  const LONE_R = 25, LONE_K = 1.5, LONE_T = 30;
+  function coLone(p) {
+    if (!p || p.st !== 'alive' || !DG.TRIAL.on('loneTarget') || !(VS.on && COOP())) return false;
+    const al = coAlive(); if (al.length < 2 || inSafe(p.tp.pos)) return false;
+    return !al.some(o => o !== p && Math.hypot(o.tp.pos.x - p.tp.pos.x, o.tp.pos.z - p.tp.pos.z) < LONE_R);
   }
 
   // ---- co-op items the game carries out (items.js asks): trap, wire hook, first-aid kit, signal gun ----
@@ -2315,6 +2326,7 @@
   function coDartHit() { const M = coM('tranq'); if (coActive(M)) { M.v++; tellAll(`麻酔弾が命中（${Math.min(M.v, M.need)}/${M.need}）`, 2.5); } }
   function coMission(dt, alive) {
     VS.dtHost = dt;
+    CO.lone = 0; VS.players.forEach(p => { if (!p) return; const l = coLone(p); if (l) CO.lone |= 1 << p.slot; CO.loneT[p.slot] = l ? CO.loneT[p.slot] + dt : 0; });
     coHolds(dt, alive);
     if (CO.phase === 'm') {
       CO.ms.forEach(M => { if (coActive(M)) coStep(M, dt, alive); });
@@ -2393,8 +2405,19 @@
     const aggro = (CO.phase === 'esc' ? 2.2 : [1, 1.3, 1.7][CO.stage] || 1) * (CO.ev.t > 0 && CO.ev.k === 'frenzy' ? 2 : 1);
     const out = alive.filter(p => !inSafe(p.tp.pos)); if (out.length) alive = out; // those out in the open first
     const egg = alive.filter(p => CO.bag[p.slot] === 'egg'), zone = coM('lookout');
+    // (trial 'loneTarget') someone alone for LONE_T s: the nearest roaming stalker (if over 30 m off) heads their way
+    // (to somewhere within 30 m of them), at most every 20 s each
+    const drift = new Map();
+    alive.forEach(p => {
+      if (!(CO.loneT[p.slot] > LONE_T) || (CO.loneCD[p.slot] -= 3) > 0) return;
+      let best = null, bd = 1e9;
+      roster.forEach(a => { if (!a.d.root.visible || a.state !== 'wander' || a.stun > 0 || drift.has(a)) return; const d = Math.hypot(a.pos.x - p.tp.pos.x, a.pos.z - p.tp.pos.z); if (d < bd) { bd = d; best = a; } });
+      if (best && bd > 30) { drift.set(best, p); CO.loneCD[p.slot] = 20; }
+    });
     roster.forEach((a, i) => {
       if (!a.d.root.visible || a.state !== 'wander' || a.stun > 0) return;
+      const lp = drift.get(a);
+      if (lp) { a.home.set(lp.tp.pos.x + (Math.random() - 0.5) * 60, 0, lp.tp.pos.z + (Math.random() - 0.5) * 60); a.roamT = 25; return; }
       // (mission rules) whoever carries an egg is smelt out; the lookout draws the first one
       if (egg.length && Math.random() < 0.7) {
         const tp = egg[Math.floor(Math.random() * egg.length)].tp, r = Math.max(12, 95 - D.calm * aggro * 1.6);
