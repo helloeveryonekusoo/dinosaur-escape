@@ -1015,7 +1015,7 @@
       (m.list || []).forEach(e => { VS.players[e.s] = mkPlayer(e.s, null, e.name); if (old[e.s]) VS.players[e.s].st = old[e.s].st; });
       if (VS.phase === 'idle') VS.phase = 'lobby';
       if (!was || $('vsLobby').style.display === 'flex') openLobby(); else renderLobby();
-    } else if (m.t === 'start') { VS.diff = vsDiffKey(m.diff); VS.hints = !!m.hints; VS.mode = m.mode === 'coop' ? 'coop' : 'race'; vsPrepare(m.seed | 0, m.list || []); }
+    } else if (m.t === 'start') { DG.TRIAL.follow(m.tr || {}); VS.diff = vsDiffKey(m.diff); VS.hints = !!m.hints; VS.mode = m.mode === 'coop' ? 'coop' : 'race'; vsPrepare(m.seed | 0, m.list || []); }
     else if (m.t === 'go') { if (VS.phase === 'loading') VS.goPending = true; else vsGo(); }
     else if (m.t === 'snap') applySnap(m);
     else if (m.t === 'took') { if (VS.on) items.take(m.i | 0, (m.s | 0) === VS.mySlot); }
@@ -1035,7 +1035,7 @@
     const n = VS.players.filter(Boolean).length;
     if (!VS.host || VS.phase === 'loading' || n < 2 || n > MAX_PLAYERS()) return;
     VS.seed = (Math.random() * 1e6) | 0;
-    DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList(), diff: VS.diff, hints: VS.hints ? 1 : 0, mode: VS.mode });
+    DG.TRIAL.follow(null); DG.Net.broadcast({ t: 'start', seed: VS.seed, list: vsList(), diff: VS.diff, hints: VS.hints ? 1 : 0, mode: VS.mode, tr: DG.TRIAL.hostSet() });
     VS.ready = new Set();
     VS.players.forEach(p => { if (p && !playerConnected(p)) VS.ready.add(p.slot); });
     await vsPrepare(VS.seed, vsList());
