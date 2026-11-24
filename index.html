@@ -140,6 +140,9 @@
   #tAct{right:calc(160px + env(safe-area-inset-right));bottom:14px}
   #tLight{right:calc(160px + env(safe-area-inset-right));bottom:86px}
   #tPing{right:calc(16px + env(safe-area-inset-right));bottom:158px}
+  /* (trial 'handOver') what T hands over, under the prompt; on a phone the 「渡す」 button, above ライト */
+  #coHand{position:absolute;left:50%;top:calc(60% + 52px);transform:translateX(-50%);font-size:13px;color:#c9e6a0;text-shadow:0 1px 4px #000;display:none;white-space:nowrap}
+  #touch #tHand{right:calc(160px + env(safe-area-inset-right));bottom:158px;display:none} body.coop.canhand #touch #tHand{display:block}
   body.touch #coop .panel{top:58px;left:calc(10px + env(safe-area-inset-left));font-size:11px;line-height:1.5;min-width:170px;padding:5px 8px}
   #count{display:none;z-index:26;align-items:center;justify-content:center;font-size:96px;font-weight:800;letter-spacing:.1em;text-shadow:0 4px 30px #000}
   #endRank{margin:4px 0 16px;font-size:15px;line-height:2}
@@ -251,7 +254,7 @@
 <div id="touch" class="layer">
   <div id="stickZone"></div><div id="stick"><i></i></div>
   <button id="tRun">走る</button><button id="tJump">跳ぶ</button><button id="tCrouch">しゃ<br>がむ</button><button id="tUse">使う</button><button id="tPause">Ⅱ</button>
-  <button id="tAct" class="co">調べる</button><button id="tLight" class="co">ライト</button><button id="tPing" class="co">合図</button>
+  <button id="tAct" class="co">調べる</button><button id="tLight" class="co">ライト</button><button id="tPing" class="co">合図</button><button id="tHand">渡す</button>
 </div>
 <div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
 <div id="pause" class="layer"><h2>PAUSE</h2>
@@ -293,6 +296,7 @@
   <canvas id="coMap" aria-label="周りの地図"></canvas>
   <div id="coFlash"></div>
   <div id="coPrompt"><span id="coPromptText"></span><i><b id="coPromptBar"></b></i></div>
+  <div id="coHand"></div>
   <div id="coGhost"></div>
 </div>
 <div id="spec" class="layer"><div class="bar">

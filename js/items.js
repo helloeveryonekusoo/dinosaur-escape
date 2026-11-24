@@ -151,11 +151,13 @@
       const halo = glow(type === 'flash' ? 0xffffff : 0xffa040); halo.position.copy(pos).y += 0.2; halo.scale.setScalar(0.01); scene.add(halo); objs.push(halo);
       S.fxs.push({ type, pos: pos.clone(), t: 0, dur: type === 'cracker' ? 6 : type === 'dyn' ? 3.6 : 1.2, objs, halo, popT: 0, boom: false });
     };
-    // an item handed over (a crate's find)
-    S.give = function (type, n) {
+    // an item handed over (a crate's find; from: a teammate's name, when they gave it)
+    S.give = function (type, n, from) {
       if (!TYPES[type] || !ORDER.includes(type)) return;
-      S.inv[type] = (S.inv[type] || 0) + (n || 1); msg(`${TYPES[type].icon} ${TYPES[type].name}を手に入れた`, 2.2); A.pickup && A.pickup(); renderHud();
+      S.inv[type] = (S.inv[type] || 0) + (n || 1); msg(from ? `${from}から ${TYPES[type].icon} ${TYPES[type].name}を受け取った` : `${TYPES[type].icon} ${TYPES[type].name}を手に入れた`, 2.2); A.pickup && A.pickup(); renderHud();
     };
+    // one of an item out of the bag, to hand to a teammate (co-op); false if there is none
+    S.handOut = function (type) { if (!S.inv[type]) return false; S.inv[type]--; renderHud(); return true; };
     // df: the difficulty level ({items, startFlare, flareTime}); omitted = the original, easy values
     // opt.seed: lay the pickups out from this seed (a race: every player gets the same layout);
     // opt.starts: as many pickups as for this many players (a race has three)

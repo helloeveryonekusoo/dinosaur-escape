@@ -256,6 +256,7 @@
     press('tAct', () => TI.act = true, () => TI.act = false);
     press('tLight', () => coToggleLight());
     press('tPing', () => coPing());
+    press('tHand', () => coHand());
     document.addEventListener('contextmenu', e => e.preventDefault());
   }
   let touchShown = null;
@@ -296,7 +297,7 @@
     addEventListener('keydown', e => {
       keys[e.code] = true; if (e.code === 'KeyC') P.crouch = !P.crouch; if (e.code === 'Space') e.preventDefault();
       if (VS.on && !e.repeat) specKey(e.code);
-      if (VS.on && COOP() && state === 'play' && !e.repeat) { if (e.code === 'KeyR') coToggleLight(); if (e.code === 'KeyG') coPing(); }
+      if (VS.on && COOP() && state === 'play' && !e.repeat) { if (e.code === 'KeyR') coToggleLight(); if (e.code === 'KeyG') coPing(); if (e.code === 'KeyT') coHand(); }
       if (state === 'play') { const m = /^Digit([1-9])$/.exec(e.code); if (m && +m[1] <= DG.ITEM_ORDER.length) items.select(+m[1] - 1); if (e.code === 'KeyF') items.use(); }
     });
     addEventListener('mousedown', e => { if (e.button === 0 && state === 'play' && document.pointerLockElement === renderer.domElement) items.use(); });
@@ -1004,6 +1005,7 @@
       else if (m.k === 'signal') coSignal(x, z, p.slot);
       else if (m.k === 'medkit') { const g = VS.players[m.s | 0]; if (g && g.st === 'ghost' && g.tp.pos.distanceTo(p.tp.pos) < 8) coReviveHost(g.slot, p.tp.pos); }
       else if (['cracker', 'flash', 'dyn'].includes(m.k)) coLandHost(m.k, new V(x, +m.y || W.height(x, z), z), p.slot);
+      else if (m.k === 'hand') coHandHost(p.slot, m.s | 0, String(m.i || ''));
     }
   }
   function guestMsg(m) {
@@ -1023,7 +1025,7 @@
     else if (m.t === 'tell') msg(String(m.m || '').slice(0, 60), +m.d || 2);
     else if (m.t === 'fx' && m.k === 'bolt') coBolt(+m.d || 1);
     else if (m.t === 'fx' && m.k === 'it') { if (VS.on && (m.s | 0) !== VS.mySlot && ['cracker', 'flash', 'dyn'].includes(m.i)) items.fxAt(m.i, new V(+m.x, +m.y, +m.z)); }
-    else if (m.t === 'give') { if (VS.on) items.give(String(m.k)); }
+    else if (m.t === 'give') { if (VS.on) items.give(String(m.k), 1, m.f ? String(m.f).slice(0, 8) : ''); }
     else if (m.t === 'revive') { if (VS.on && coGhost()) coRevived(new V(+m.x, +m.y, +m.z)); }
     else if (m.t === 'fx' && m.k === 'miss') { const a = TREX()[m.i | 0]; if (a && a.catch) coMiss(a, null); }
     else if (m.t === 'fx' && m.k === 'spawn') { A.roar(new V(+m.x, +m.y, +m.z), DG.SPECIES.trex.ai.roarPitch, 2.2, 2.6); msg(`🦖 森の奥で新たな咆哮が響いた…（ティラノ ${m.n | 0}頭）`, 3); }
@@ -2041,6 +2043,43 @@
     } else el.style.display = 'none';
   }
   function coToggleLight() { if (!COOP() || coGhost()) return; CO.light = !CO.light; A.whoosh(); }
+  // (trial 'handOver') T / 「渡す」: give the nearest survivor within HAND_R what you carry (a load, a key), else the item
+  // picked in the bar, else your fuses. The host moves loads and fuses; an item leaves here and is given there.
+  const HAND_R = 3;
+  function coHandPlan() {
+    if (!(VS.on && COOP()) || VS.phase !== 'race' || !DG.TRIAL.on('handOver')) return null;
+    const me = coMe(); if (!me || me.st !== 'alive') return null;
+    let to = null, bd = HAND_R;
+    VS.players.forEach(p => { if (!p || p.slot === VS.mySlot || p.st !== 'alive') return; const d = Math.hypot(p.tp.pos.x - P.pos.x, p.tp.pos.z - P.pos.z); if (d < bd) { bd = d; to = p; } });
+    if (!to) return null;
+    const bag = coMine(), type = DG.ITEM_ORDER[items.sel], IT = DG.ITEM_TYPES;
+    if (bag) return CO.bag[to.slot] ? { to, text: `${to.name}は両手がふさがっている（${BAG_NAME[CO.bag[to.slot]]}）` } : { to, what: 'bag', text: `${to.name}に${BAG_NAME[bag]}を渡す` };
+    if (type && items.inv[type] > 0) return { to, what: type, text: `${to.name}に${IT[type].icon}${IT[type].name}を渡す` };
+    if (CO.fz[VS.mySlot] > 0) return { to, what: 'fz', text: `${to.name}にヒューズを渡す` };
+    return null;
+  }
+  let handCD = 0;
+  function coHand() {
+    if (handCD > T) return;
+    const h = coHandPlan(); if (!h) return; if (!h.what) { msg(h.text, 1.8); return; }
+    if (h.what !== 'bag' && h.what !== 'fz' && !items.handOut(h.what)) return;
+    handCD = T + 0.8; A.pickup();
+    if (VS.host) coHandHost(VS.mySlot, h.to.slot, h.what); else DG.Net.send({ t: 'it', k: 'hand', s: h.to.slot, i: h.what });
+  }
+  function coHandHost(fs, ts, what) {
+    const a = VS.players[fs], b = VS.players[ts]; if (!a || !b || fs === ts) return;
+    const ok = DG.TRIAL.on('handOver') && a.st === 'alive' && b.st === 'alive' && Math.hypot(a.tp.pos.x - b.tp.pos.x, a.tp.pos.z - b.tp.pos.z) < HAND_R + 1.5;
+    let name = '';
+    if (what === 'bag') { const k = CO.bag[fs]; if (!ok || !k || CO.bag[ts]) return; CO.bag[ts] = k; CO.bag[fs] = ''; name = BAG_NAME[k]; }
+    else if (what === 'fz') { const n = CO.fz[fs]; if (!ok || !n) return; CO.fz[ts] += n; CO.fz[fs] = 0; name = `ヒューズ${n}本`; }
+    else {
+      if (!DG.ITEM_TYPES[what]) return;
+      if (!ok) { coGive(a, what); tell(a.tp, '渡せなかった', 1.8); return; } // back to the giver
+      coGive(b, what, a.name); name = DG.ITEM_TYPES[what].name;
+    }
+    tell(a.tp, `${b.name}に${name}を渡した`, 2);
+    if (what === 'bag' || what === 'fz') tell(b.tp, `${a.name}から${name}を受け取った`, 2.5);
+  }
 
   // ---- co-op items the game carries out (items.js asks): trap, wire hook, first-aid kit, signal gun ----
   DG.coCanThrow = () => !(VS.on && COOP() && HEAVY[coMine()]);
@@ -2171,7 +2210,7 @@
   }
 
   // ---- host: the missions ----
-  function coGive(p, type) { if (p.slot === VS.mySlot) items.give(type); else if (p.id) DG.Net.send({ t: 'give', k: type }, p.id); }
+  function coGive(p, type, from) { if (p.slot === VS.mySlot) items.give(type, 1, from); else if (p.id) DG.Net.send({ t: 'give', k: type, f: from || '' }, p.id); }
   function coDropAll(p, pos) {
     const q = pos || p.tp.pos;
     if (CO.fz[p.slot] > 0) { CO.drops.push({ x: q.x, z: q.z, k: 'fz', n: CO.fz[p.slot], p: 0 }); CO.fz[p.slot] = 0; }
@@ -2821,6 +2860,7 @@
     } else gb.style.display = 'none';
     $('tAct').style.display = $('tLight').style.display = ghost ? 'none' : ''; $('tPing').style.display = ghost ? '' : 'none';
     $('tLight').classList.toggle('on', CO.light);
+    { const hp = !ghost && me && me.st === 'alive' ? coHandPlan() : null, he = $('coHand'); he.style.display = hp ? 'block' : 'none'; if (hp) he.textContent = hp.what ? (DG.MOBILE ? '「渡す」：' : 'T：') + hp.text : hp.text; document.body.classList.toggle('canhand', !!(hp && hp.what)); }
     // (trial 'phoneHud') on a phone the status line (hidden, crouching...) sits just under the mission panel instead of
     // on top of it
     const st = $('status');
