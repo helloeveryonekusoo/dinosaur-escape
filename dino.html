@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>沼の捕食者になる</title>
+<!-- Play as the swamp stalker (the co-op mode's horror dinosaur) on the night swamp: js/dinoplay.js -->
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:"Yu Gothic UI","Meiryo",system-ui,sans-serif;color:#eee;
+            -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block;touch-action:none}
+  .layer{position:fixed;inset:0;pointer-events:none}
+  button{pointer-events:auto;font:inherit;font-size:15px;letter-spacing:.12em;color:#f2e6c8;background:rgba(20,18,12,.7);
+         border:1px solid #c9a24a;padding:12px 26px;cursor:pointer;border-radius:2px}
+  button:hover{background:#c9a24a;color:#111}
+  #loading{display:flex;align-items:center;justify-content:center;flex-direction:column;background:#0b0d0a;pointer-events:auto;z-index:50}
+  #loading .bar{width:320px;max-width:80vw;height:4px;background:#222;margin-top:18px;overflow:hidden;border-radius:2px}
+  #loading .bar i{display:block;height:100%;width:0;background:#c9a24a;transition:width .2s}
+  #loadText{font-size:13px;color:#999;margin-top:10px;letter-spacing:.1em}
+  h1{font-weight:800;letter-spacing:.18em;margin:0;font-size:40px;text-shadow:0 4px 30px rgba(0,0,0,.8)}
+  .sub{color:#c9a24a;letter-spacing:.4em;font-size:12px;margin-top:6px}
+  /* the start / pause screen */
+  #start{display:none;flex-direction:column;justify-content:center;padding:0 6vw;pointer-events:auto;z-index:20;
+         background:linear-gradient(90deg,rgba(0,0,0,.8) 0%,rgba(0,0,0,.35) 50%,rgba(0,0,0,0) 75%)}
+  #start .keys{font-size:13px;color:#cfc6ad;line-height:2;margin:22px 0 26px;max-width:520px}
+  #start .keys b{display:inline-block;min-width:96px;color:#f2e6c8;font-weight:600}
+  #start .note{font-size:12px;color:#8f8a7c;margin-top:16px}
+  body.touch #start .pc{display:none} body:not(.touch) #start .tp{display:none}
+  /* during play: what you are doing, top left; a short reminder of the keys, bottom left */
+  #hud{z-index:5}
+  #state{position:absolute;left:calc(14px + env(safe-area-inset-left));top:12px;font-size:13px;letter-spacing:.12em;color:#c9a24a;text-shadow:0 1px 4px #000}
+  #state small{display:block;color:#bdb6a2;font-size:11px;letter-spacing:.05em;margin-top:2px}
+  #tips{position:absolute;left:calc(14px + env(safe-area-inset-left));bottom:12px;font-size:11.5px;color:#a9a392;line-height:1.7;text-shadow:0 1px 3px #000}
+  body.touch #tips{display:none}
+  /* touch controls */
+  #touch{display:none;z-index:6} body.touch #touch.on{display:block}
+  #stick{position:absolute;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;border:2px solid rgba(255,255,255,.25);display:none}
+  #stick.on{display:block}
+  #stick i{position:absolute;left:50%;top:50%;width:50px;height:50px;margin:-25px 0 0 -25px;border-radius:50%;background:rgba(242,230,200,.5)}
+  #touch button{position:absolute;width:64px;height:64px;padding:0;border-radius:50%;font-size:12px;letter-spacing:0;line-height:1.2;
+                background:rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.4);color:#fff;touch-action:none}
+  #touch button.on{background:rgba(201,162,74,.75);border-color:#f2e6c8;color:#111}
+  #tRun{right:calc(90px + env(safe-area-inset-right));bottom:14px}
+  #tBite{right:calc(16px + env(safe-area-inset-right));bottom:14px}
+  #tRoar{right:calc(16px + env(safe-area-inset-right));bottom:88px}
+  #tLow{right:calc(90px + env(safe-area-inset-right));bottom:88px}
+  #tCatch{right:calc(164px + env(safe-area-inset-right));bottom:14px}
+  #tView{right:calc(164px + env(safe-area-inset-right));bottom:88px}
+  #tPause{right:calc(12px + env(safe-area-inset-right));top:10px;width:40px!important;height:40px!important;font-size:13px!important}
+  #rotate{display:none;align-items:center;justify-content:center;background:#000;z-index:60;font-size:18px;text-align:center;line-height:2}
+  @media (orientation:portrait){ body.touch #rotate{display:flex} }
+</style>
+</head>
+<body>
+<div id="loading" class="layer"><h1>沼の捕食者</h1><div class="sub">THE SWAMP STALKER</div><div class="bar"><i id="loadBar"></i></div><div id="loadText">準備中</div></div>
+<div id="start" class="layer">
+  <h1>沼の捕食者になる</h1>
+  <div class="sub">PLAY AS THE STALKER</div>
+  <div class="keys pc">
+    <b>W A S D</b>歩く（カメラの向きに進む）<br>
+    <b>Shift</b>走る<br>
+    <b>マウス</b>見回す（頭もそちらを向く）・ホイールで近づく／離れる<br>
+    <b>Q</b>咆哮　<b>E</b>前屈みで吠える<br>
+    <b>左クリック / F</b>噛みつく　<b>右クリック / C</b>飛びかかって捕らえる<br>
+    <b>V</b>視点を切り替える（後ろから・頭の上・遠くから）<br>
+    <b>Esc</b>一時停止
+  </div>
+  <div class="keys tp">
+    <b>左側をドラッグ</b>歩く（大きく倒すと速く）<br>
+    <b>右側をドラッグ</b>見回す（頭もそちらを向く）・2本指で近づく／離れる<br>
+    <b>走る</b>走る・歩くを切り替え<br>
+    <b>咆哮 ／ 低く</b>咆哮 ／ 前屈みで吠える<br>
+    <b>噛む ／ 捕らえる</b>噛みつく ／ 飛びかかって捕らえる<br>
+    <b>視点</b>視点を切り替える
+  </div>
+  <div><button id="btnGo">はじめる</button></div>
+  <div class="note">音が出ます。夜の湿地は毎回、地形が変わります。</div>
+</div>
+<div id="hud" class="layer"><div id="state"></div><div id="tips">WASD 歩く ／ Shift 走る ／ Q 咆哮 ／ E 前屈み ／ クリック 噛む ／ 右クリック 捕らえる ／ V 視点 ／ Esc 一時停止</div></div>
+<div id="touch" class="layer">
+  <div id="stick"><i></i></div>
+  <button id="tRun">走る</button><button id="tBite">噛む</button><button id="tRoar">咆哮</button><button id="tLow">低く</button>
+  <button id="tCatch">捕らえる</button><button id="tView">視点</button><button id="tPause">Ⅱ</button>
+</div>
+<div id="rotate" class="layer"><div>スマホを横向きにしてください<br>📱 ↻</div></div>
+
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+window.THREE = THREE; window.THREE_Sky = Sky; window.THREE_GLTFLoader = GLTFLoader; window.THREE_SkeletonUtils = SkeletonUtils;
+const files = ['js/noise.js', 'js/textures.js', 'js/gltf_dino.js', 'js/props.js', 'js/species.js', 'js/world.js', 'js/audio.js', 'js/dinoplay.js'];
+for (const f of files) {
+  await new Promise((res, rej) => { const s = document.createElement('script'); s.src = f; s.onload = res; s.onerror = () => rej(new Error('load ' + f)); document.head.appendChild(s); });
+}
+DG.playBoot().catch(e => { document.getElementById('loadText').textContent = 'エラー: ' + e.message; console.error(e); });
+</script>
+</body>
+</html>
