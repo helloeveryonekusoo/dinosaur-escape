@@ -1684,11 +1684,15 @@
     tranq: { tier: 3, kind: 'tranq', name: '麻酔で眠らせる', desc: '麻酔銃を捕食者に2発当てる（全員に麻酔弾2発つき）', need: 2 },
     cage: { tier: 3, kind: 'cage', name: '檻の罠', desc: '檻に肉を仕掛け、捕食者を誘い込んで閉じ込める', prop: 'cage' },
     lookout: { tier: 3, kind: 'zone', name: '見張り台の死守', desc: '見張り台の周り（10m）に誰かがいる時間を合計40秒ためる', dur: 40, r: 10, prop: 'lookout' },
-    door: { tier: 3, kind: 'door', name: '倉庫の扉', desc: '錆びた倉庫の扉をこじ開ける（合計14秒・大きな音）', dur: 14, verb: '扉をこじ開ける', prop: 'door', lure: 140 }
+    door: { tier: 3, kind: 'door', name: '倉庫の扉', desc: '錆びた倉庫の扉をこじ開ける（合計14秒・大きな音）', dur: 14, verb: '扉をこじ開ける', prop: 'door', lure: 140 },
+    // (trial 'infoTask', js/trial.js: drawn only with it on) one reads the wiring plan and keeps reading, while the others
+    // throw the breaker it names, three times; the wrong one sets off an alarm
+    brk: { tier: 2, kind: 'brk', name: '非常ブレーカー', desc: '1人が配線図の前で読み続け、そのあいだに仲間が3つのブレーカーから指示された1つを入れる（3回。違うと警報が鳴る）', n: 3, prop: 'breaker', trial: 'infoTask' }
   };
   // (trial 'splitKey') the store's door with two keys instead of a crowbar: each lies somewhere of its own, nobody may carry
   // both (but a last survivor), and the two holders turn them together
   const KEY_DOOR = Object.assign({}, MD.door, { name: '倉庫の扉（鍵2本）', desc: '離れた2か所で鍵を拾い、鍵を持った2人で扉の鍵を同時に回す（鍵は1人1本まで）', kd: true, lure: 0, verb: '鍵を回す' });
+  const BRK_COL = ['赤', '青', '黄'], BRK_HEX = ['#ff6a50', '#6ab0ff', '#ffd650'];
   const MIDS = Object.keys(MD);
   const BAG = ['', 'fuel', 'egg', 'drone', 'hurt', 'key', 'key2'], BAG_NAME = { fuel: '燃料缶', egg: '卵', drone: 'ドローン', hurt: '負傷者', key: '倉庫の鍵', key2: '倉庫の鍵2本' };
   const HEAVY = { fuel: 1, drone: 1, hurt: 1 };
@@ -1742,7 +1746,7 @@
   // ---- building this game's missions (on every machine, from the shared seed: no need to send them) ----
   function coBuild(nPlayers, force) {
     const rr = DG.N.rng(VS.seed + 31), S = W.SITES, L = W.LIMIT - 30;
-    let ids = [1, 2, 3].flatMap(t => shuffle(MIDS.filter(id => MD[id].tier === t), rr).slice(0, 2));
+    let ids = [1, 2, 3].flatMap(t => shuffle(MIDS.filter(id => MD[id].tier === t && (!MD[id].trial || DG.TRIAL.on(MD[id].trial))), rr).slice(0, 2));
     if (force) ids = force; // (testing: DG._dbg.coTest)
     // within a stage, the two missions in a random order (the HUD lists them so)
     const spots = shuffle(S.spots.slice(), rr); let si = 0;
@@ -1754,7 +1758,7 @@
     const tw = world.props.tower;
     CO.code = String(1000 + Math.floor(rr() * 9000));
     CO.ms = ids.map((id, i) => {
-      const d = id === 'door' && DG.TRIAL.on('splitKey') ? KEY_DOOR : MD[id], M = { id, d, stage: Math.floor(i / 2), T: [], s: [], v: 0, need: 1, done: false, lure: 0 };
+      const d = id === 'door' && DG.TRIAL.on('splitKey') ? KEY_DOOR : MD[id], M = { id, d, stage: Math.floor(i / 2), T: [], s: [], v: 0, x: 0, need: 1, done: false, lure: 0 };
       const tg = (p, k, x) => M.T.push(Object.assign({ p, k: k || 't' }, x || {}));
       if (d.kind === 'hold') for (let k = 0; k < d.n; k++) tg(d.where === 'water' ? water() : d.where === 'any' ? dry() : spot());
       else if (d.kind === 'code') { tg(spot(), 'board'); tg(spot(), 'safe'); }
@@ -1774,6 +1778,17 @@
         const ka = randAt(q => { const dd = Math.hypot(q.x - dp.x, q.z - dp.z); return dd > 50 && dd < 140 && W.height(q.x, q.z) > W.WATER + 0.12; });
         const kb = randAt(q => { const dd = Math.hypot(q.x - dp.x, q.z - dp.z); return dd > 50 && dd < 140 && Math.hypot(q.x - ka.x, q.z - ka.z) > 70 && W.height(q.x, q.z) > W.WATER + 0.12; });
         [ka, kb].forEach(q => tg(q, 'key', { name: '倉庫の鍵', prop: 'key', pic: 'key' }));
+      }
+      else if (d.kind === 'brk') { // the plan on an island; the breakers in a ring round a place 70-130 m off
+        const pl = spot(); tg(pl, 'plan', { name: '配線図', prop: 'board', pic: 'brkplan' });
+        const far = q => { const dd = Math.hypot(q.x - pl.x, q.z - pl.z); return dd > 70 && dd < 130 && W.height(q.x, q.z) > W.WATER + 0.12; };
+        const c = randAt(far), a0 = rr() * Math.PI * 2;
+        for (let k = 0; k < 3; k++) {
+          let q = null;
+          for (let j = 0; j < 24 && !q; j++) { const a = a0 + k * 2.094 + (j % 6 - 2.5) * 0.15, r = 9 + (j >> 1) % 6; const t = new V(c.x + Math.sin(a) * r, 0, c.z + Math.cos(a) * r); if (W.height(t.x, t.z) > W.WATER + 0.1) q = t; }
+          tg(q || new V(c.x + Math.sin(a0 + k * 2.094) * 10, 0, c.z + Math.cos(a0 + k * 2.094) * 10), 'brk', { name: BRK_COL[k] + 'のブレーカー', prop: 'breaker', pic: 'brk', col: k });
+        }
+        M.need = d.n; M.cur = Math.floor(rr() * 3); M.mem = 0;
       }
       else if (d.kind === 'cage' || d.kind === 'zone' || d.kind === 'door') tg(spot());
       else if (d.kind === 'tranq') M.need = d.need;
@@ -1905,6 +1920,10 @@
       box(0.018, 0.12, 0.018, 0xd8b050, 0.1, 0.83, 0.09, { metalness: 0.8, roughness: 0.3 }); box(0.04, 0.02, 0.018, 0xd8b050, 0.12, 0.79, 0.09, { metalness: 0.8, roughness: 0.3 });
       u.dim = glowS(0xffd870, 1.1, 0.6); u.dim.position.set(0.1, 0.9, 0.1); g.add(u.dim); u.hide = true;
     }
+    else if (kind === 'breaker') { // (trial 'infoTask') a breaker box on a post, with a lamp in its colour
+      cyl(0.07, 1.7, 0x4a3a26, 0, 0.85); if (!md('powerbox', 0.7, 0, 1.0, 0.09, { fit: 'h' })) box(0.5, 0.6, 0.22, 0x5a6466, 0, 1.3, 0.1, { metalness: 0.5, roughness: 0.5 });
+      u.lamp = glowS(new THREE.Color(BRK_HEX[k - 1] || '#ffffff').getHex(), 1.3, 0.35); u.lamp.position.set(0, 1.95, 0.12); g.add(u.lamp);
+    }
     else if (kind === 'gen' || kind === 'box' || kind === 'dst') { /* the tower's own generator / fuse box, or the camp */ }
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return g;
@@ -1921,7 +1940,7 @@
       o.position.set(t.p.x, M.d.where === 'water' ? W.WATER : gy(t.p), t.p.z); o.rotation.y = (i * 1.7 + M.stage) % 6.283;
       CO.marks.props.add(o); t.obj = o;
       if (M.d.nest && i > 0) return; // one label for the whole nest
-      t.lab = labelSprite(t.name || M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : kind === 'cage' ? 6.8 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
+      t.lab = labelSprite(t.name || M.d.name, t.col != null ? BRK_HEX[t.col] : '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : kind === 'cage' ? 6.8 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
     }));
     world.scene.add(g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props);
   }
@@ -2029,7 +2048,7 @@
       if (d.kind === 'photo') { if (coAimed(camera.position, P.yaw, P.pitch)) return { id: id(0), text: '捕食者を撮影する', prog: M.v }; continue; }
       for (let ti = 0; ti < M.T.length; ti++) {
         const t = M.T[ti], r = d.kind === 'door' || d.kind === 'gen' || d.kind === 'sync' ? 3.6 : t.k === 'dst' ? 0 : 2.6;
-        if (!r || M.s[ti] >= 1 || !near(t.p, r)) continue;
+        if (!r || (M.s[ti] >= 1 && d.kind !== 'brk') || !near(t.p, r)) continue; // (the plan stays readable once read)
         if (d.kind === 'hold') {
           if (d.where === 'water' && W.waterDepth(me.x, me.z) < 0.15) return { text: '印のそばで、水の中に立って採取する' };
           return { id: id(ti), text: d.verb, prog: M.s[ti] };
@@ -2051,6 +2070,11 @@
           return { text: '鍵のかかった扉 — 2本の鍵を持った2人で同時に回す' };
         }
         if (d.kind === 'door') return { id: id(ti), text: d.verb + '（何人でも速くなる）', prog: M.s[ti] };
+        if (d.kind === 'brk') { // (trial 'infoTask')
+          const said = M.x ? BRK_COL[M.x - 1] : '';
+          if (t.k === 'plan') return { id: id(ti), text: said ? `配線図を読み続ける（仲間に「${said}」と伝わっている）` : '配線図を読む（読み続けると、次に入れるブレーカーが仲間に伝わる）', prog: M.s[ti] };
+          return { id: id(ti), text: `${BRK_COL[t.col]}のブレーカーを入れる` + (said ? (M.x - 1 === t.col ? '（指示どおり）' : `（指示は${said}）`) : '（指示がない — 違うと警報）'), prog: M.s[ti] };
+        }
       }
     }
     for (let i = 0; i < 6; i++) if (!CO.searched.has(i) && near(world.props.caches[i].pos, 2.3)) return { id: 'c' + i, text: '木箱を調べる', prog: CO.cs[i] };
@@ -2288,7 +2312,7 @@
       const m = /^m(\d)\.(\d)$/.exec(h); if (!m) return;
       const M = CO.ms[+m[1]], ti = +m[2]; if (!coActive(M)) return;
       const d = M.d, t = M.T[ti];
-      if (!t || M.s[ti] >= 1 || ['sync', 'gen', 'photo', 'zone'].includes(d.kind) || (d.kd && t.k !== 'key')) return; // (those are run in coStep)
+      if (!t || M.s[ti] >= 1 || ['sync', 'gen', 'photo', 'zone', 'brk'].includes(d.kind) || (d.kd && t.k !== 'key')) return; // (those are run in coStep)
       if (!nearP(p, t.p, d.kind === 'door' ? 3.6 : 2.6)) return;
       let dur = d.dur || 1;
       if (d.kind === 'hold' && d.where === 'water' && W.waterDepth(p.tp.pos.x, p.tp.pos.z) < 0.1) return;
@@ -2348,6 +2372,26 @@
       if (M.go) { M.s[0] = Math.min(1, M.s[0] + dt / (solo ? 8 : 3)); coLure('door', 3, M.T[0].p, 60); }
       else M.s[0] = Math.max(0, M.s[0] - dt * 0.1);
       if (M.s[0] >= 1) { at.forEach(p => CO.bag[p.slot] = ''); tellAll('倉庫の扉の鍵が開いた！', 2.5); }
+    } else if (d.kind === 'brk') { // (trial 'infoTask')
+      const solo = alive.length < 2, readers = holders(0);
+      M.s[0] = readers.length ? Math.min(1, M.s[0] + dt / 1.5) : 0;
+      let x = 0;
+      if (M.s[0] >= 1) { x = M.cur + 1; if (solo) M.mem = 25; } // read: the others are told as long as it is read; a last survivor remembers it a while
+      else if (solo && M.mem > 0) { M.mem -= dt; if (M.mem > 0) x = M.cur + 1; }
+      if (x && x !== M.x) tellAll(`配線図：次は「${BRK_COL[M.cur]}」のブレーカー（${M.v + 1}/${M.need}）`, 3);
+      M.x = x;
+      for (let i = 1; i < M.T.length; i++) {
+        const hs = holders(i);
+        if (!hs.length) { M.s[i] = Math.max(0, M.s[i] - dt * 0.5); continue; }
+        M.s[i] = Math.min(1, M.s[i] + dt / 2); if (M.s[i] < 1) continue;
+        M.s.fill(0, 1); M.mem = 0;
+        if (M.T[i].col === M.cur) {
+          M.v++; tellAll(`${hs[0].name}：${BRK_COL[M.cur]}のブレーカーを入れた（${M.v}/${M.need}）`, 2.5);
+          M.cur = Math.floor(Math.random() * 3); M.x = 0;
+        } else { lureAt(M.T[i].p, 'noise', null, 130); tellAll(`警報が鳴った！ ${BRK_COL[M.T[i].col]}は違うブレーカーだった`, 3); A.beep(new V(M.T[i].p.x, gy(M.T[i].p) + 2, M.T[i].p.z)); }
+        break;
+      }
+      if (M.v >= M.need) M.done = true;
     } else if (d.kind === 'zone') {
       const t = M.T[0];
       if (alive.some(p => nearP(p, t.p, d.r))) { M.v = Math.min(d.dur, M.v + dt); coLure('zone', 6, t.p, 110); }
@@ -2738,7 +2782,7 @@
   const CO_PH = ['m', 'esc', 'end'];
   function coState() {
     let se = 0; CO.searched.forEach(i => se |= 1 << i);
-    return { ph: CO_PH.indexOf(CO.phase), sg: CO.stage, ms: CO.ms.map(M => [Math.round(M.v * 100), M.done ? 1 : 0, M.go ? 1 : 0, ...M.s.map(s => Math.round(s * 100))]),
+    return { ph: CO_PH.indexOf(CO.phase), sg: CO.stage, ms: CO.ms.map(M => [Math.round(M.v * 100), M.done ? 1 : 0, M.go ? 1 : 0, ...M.s.map(s => Math.round(s * 100)), M.x | 0]),
       es: [CO.esc.step, Math.round(CO.esc.p * 100), Math.ceil(CO.esc.t)], fz: CO.fz.slice(), bg: CO.bag.map(b => BAG.indexOf(b)), kn: CO.know, rd: CO.rd.map(v => Math.round(v * 100)),
       se, cs: CO.cs.map(v => Math.round(v * 100)), ev: [EVK.indexOf(CO.ev.k), Math.ceil(CO.ev.t)],
       dr: CO.drops.map(d => d ? [+d.x.toFixed(1), +d.z.toFixed(1), d.k === 'fz' ? 0 : BAG.indexOf(d.k), d.n, Math.round(d.p * 100)] : 0),
@@ -2747,7 +2791,7 @@
   }
   function coApply(c) {
     CO.phase = CO_PH[c.ph] || 'm'; CO.stage = c.sg | 0;
-    (c.ms || []).forEach((e, i) => { const M = CO.ms[i]; if (!M) return; M.v = (e[0] | 0) / 100; M.done = !!e[1]; M.go = !!e[2]; M.s = M.s.map((_, k) => (e[3 + k] | 0) / 100); });
+    (c.ms || []).forEach((e, i) => { const M = CO.ms[i]; if (!M) return; M.v = (e[0] | 0) / 100; M.done = !!e[1]; M.go = !!e[2]; M.s = M.s.map((_, k) => (e[3 + k] | 0) / 100); M.x = e[3 + M.s.length] | 0; });
     const es = c.es || [0, 0, 0]; CO.esc = { step: es[0] | 0, p: (es[1] | 0) / 100, t: +es[2] || 0 };
     CO.fz = (c.fz || []).map(v => v | 0); CO.bag = (c.bg || []).map(i => BAG[i] || ''); CO.know = c.kn | 0; CO.rd = (c.rd || []).map(v => (v | 0) / 100);
     CO.searched = new Set(); for (let i = 0; i < 6; i++) if (c.se & (1 << i)) CO.searched.add(i);
@@ -2825,7 +2869,9 @@
           if (u.gate) { if (u.gateRot) u.gate.rotation.x = u.gateRot[M.v ? 0 : 1]; else u.gate.position.y = u.gateY[M.v ? 0 : 1]; }
           if (M.d.kind === 'door' && u.part) { if (u.roll) u.part.scale.y = 1 - Math.min(M.s[ti], 1) * 0.9; else u.part.position.x = M.s[ti] * 1.5; }
           if (u.ring) u.ring.material.opacity = act ? 0.2 + 0.15 * Math.sin(T * 3) : 0;
+          if (u.lamp) u.lamp.material.opacity = !act ? 0.15 : M.x === ti ? (Math.sin(T * 8) > 0 ? 1 : 0.4) : 0.3;
         }
+        if (t.lab && M.d.kind === 'brk') { t.lab.visible = act && CO.phase === 'm' && (ghost || camera.position.distanceTo(t.lab.position) < 40); return; } // (they are told apart by their labels)
         if (t.lab) { const hid = M.d.mark === false; t.lab.visible = !done && (ghost ? M.stage >= CO.stage || CO.phase !== 'm' : act && !hid && camera.position.distanceTo(t.lab.position) < 28) && CO.phase === 'm'; }
       }));
       // the lost radio beeps in the dark
@@ -2886,6 +2932,7 @@
     else if (d.kind === 'fuse') p = `${M.v}/${M.need} 本（手持ち ${CO.fz[slot]}）`;
     else if (d.kind === 'carry') p = `${M.v}/${M.need}`;
     else if (d.kd) p = `鍵 ${M.s.slice(1).filter(s => s >= 1).length}/2・${Math.round(M.s[0] * 100)}%`;
+    else if (d.kind === 'brk') p = `${M.v}/${M.need}` + (M.x ? `　指示：<span style="color:${BRK_HEX[M.x - 1]}">${BRK_COL[M.x - 1]}</span>` : '　指示なし');
     else if (d.kind === 'sync' || d.kind === 'gen' || d.kind === 'door') p = `${Math.round(Math.min(...M.s) * 100)}%`;
     else if (d.kind === 'photo') p = `${Math.round(M.v * 100)}%`;
     else if (d.kind === 'tranq') p = `命中 ${Math.min(M.v, M.need)}/${M.need}`;
@@ -2937,7 +2984,7 @@
         if (t.k === 'dst' && !ghost && !(bag && bag === M.d.item)) return;
         if (t.k === 'box' && !ghost && !CO.fz.some(v => v > 0) && !M.v) return;
         if (t.k === 'safe' && !ghost && !(CO.know & (1 << VS.mySlot))) return;
-        if (t.k === 'dst') add(t.p, M.d.to === 'gen' ? 'gen' : 'camp', true); else add(t.p, t.pic || M.id, false);
+        if (t.k === 'dst') add(t.p, M.d.to === 'gen' ? 'gen' : 'camp', true); else add(t.p, t.pic || M.id, M.d.kind === 'brk' && M.x === i);
       });
     });
     if (bag && !ghost) { const M = CO.ms.find(m => m.d.item === bag); if (M) add(M.T[M.T.length - 1].p, M.d.to === 'gen' ? 'gen' : 'camp', true); }
