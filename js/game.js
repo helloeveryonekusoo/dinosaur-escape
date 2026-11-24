@@ -524,7 +524,7 @@
     if (P.exhausted) st.push('息切れ…');
     if (items.adren > 0) st.push(`💉 アドレナリン ${items.adren.toFixed(0)}秒`);
     if (stim) st.push(`💊 興奮剤 ${items.stim.toFixed(0)}秒`); if (crash) st.push(`💊 反動で足が重い ${items.crash.toFixed(0)}秒`);
-    if (bag) st.push(`${BAG_NAME[bag]}を運んでいる${heavy ? '（重くて走れない）' : '（匂いで狙われやすい）'}`);
+    if (bag) st.push(`${BAG_NAME[bag]}を運んでいる${heavy ? '（重くて走れない）' : bag === 'egg' ? '（匂いで狙われやすい）' : ''}`);
     if (co && coLone(coMe())) st.push('👤 ひとりきり — 気付かれやすい（仲間のそばへ）');
     if (P.slide > 0) st.push('スライディング');
     if (items.camo > 0) st.push(`🟫 迷彩中 ${items.camo.toFixed(0)}秒`);
@@ -1240,8 +1240,9 @@
   const MATE_HANDS = { // wrists, in the figure's own space: x to its right, y up from the feet, -z ahead
     egg: [[-0.1, 1.1, -0.3], [0.1, 1.1, -0.3]], drone: [[-0.3, 1.02, -0.36], [0.3, 1.02, -0.36]],
     fuel: [null, [0.27, 0.8, -0.02]], hurt: [[-0.24, 1.5, -0.1], [0.26, 1.46, -0.02]],
-    work: [[-0.16, 0.98, -0.45], [0.16, 0.98, -0.42]]
+    work: [[-0.16, 0.98, -0.45], [0.16, 0.98, -0.42]], key: [null, [0.2, 1.0, -0.34]]
   };
+  MATE_HANDS.key2 = MATE_HANDS.key;
   const mq0 = new THREE.Quaternion(), mq1 = new THREE.Quaternion(), mv0 = new V(), mv1 = new V(), mv2 = new V();
   function armReach(up, lo, hd, target) {
     for (let it = 0; it < 4; it++) for (const b of [lo, up]) {
@@ -1685,8 +1686,11 @@
     lookout: { tier: 3, kind: 'zone', name: '見張り台の死守', desc: '見張り台の周り（10m）に誰かがいる時間を合計40秒ためる', dur: 40, r: 10, prop: 'lookout' },
     door: { tier: 3, kind: 'door', name: '倉庫の扉', desc: '錆びた倉庫の扉をこじ開ける（合計14秒・大きな音）', dur: 14, verb: '扉をこじ開ける', prop: 'door', lure: 140 }
   };
+  // (trial 'splitKey') the store's door with two keys instead of a crowbar: each lies somewhere of its own, nobody may carry
+  // both (but a last survivor), and the two holders turn them together
+  const KEY_DOOR = Object.assign({}, MD.door, { name: '倉庫の扉（鍵2本）', desc: '離れた2か所で鍵を拾い、鍵を持った2人で扉の鍵を同時に回す（鍵は1人1本まで）', kd: true, lure: 0, verb: '鍵を回す' });
   const MIDS = Object.keys(MD);
-  const BAG = ['', 'fuel', 'egg', 'drone', 'hurt'], BAG_NAME = { fuel: '燃料缶', egg: '卵', drone: 'ドローン', hurt: '負傷者' };
+  const BAG = ['', 'fuel', 'egg', 'drone', 'hurt', 'key', 'key2'], BAG_NAME = { fuel: '燃料缶', egg: '卵', drone: 'ドローン', hurt: '負傷者', key: '倉庫の鍵', key2: '倉庫の鍵2本' };
   const HEAVY = { fuel: 1, drone: 1, hurt: 1 };
   const ESC_NAME = ['救助ヘリ', 'ボート', '旧坑道'], ESC_PIC = ['heli', 'boat', 'mine']; // (the compass pictograms, js/pictos.js)
   // the random events of the night: [name, seconds, message]
@@ -1750,7 +1754,7 @@
     const tw = world.props.tower;
     CO.code = String(1000 + Math.floor(rr() * 9000));
     CO.ms = ids.map((id, i) => {
-      const d = MD[id], M = { id, d, stage: Math.floor(i / 2), T: [], s: [], v: 0, need: 1, done: false, lure: 0 };
+      const d = id === 'door' && DG.TRIAL.on('splitKey') ? KEY_DOOR : MD[id], M = { id, d, stage: Math.floor(i / 2), T: [], s: [], v: 0, need: 1, done: false, lure: 0 };
       const tg = (p, k, x) => M.T.push(Object.assign({ p, k: k || 't' }, x || {}));
       if (d.kind === 'hold') for (let k = 0; k < d.n; k++) tg(d.where === 'water' ? water() : d.where === 'any' ? dry() : spot());
       else if (d.kind === 'code') { tg(spot(), 'board'); tg(spot(), 'safe'); }
@@ -1765,6 +1769,12 @@
         const b = new V(clamp(a.x + Math.sin(ang) * 40, -L, L), 0, clamp(a.z + Math.cos(ang) * 40, -L, L));
         tg(a); tg(b);
       } else if (d.kind === 'gen') tg(tw.gen.clone());
+      else if (d.kind === 'door' && d.kd) { // the door on an island; its keys on dry ground 50-140 m from it, apart from each other
+        const dp = spot(); tg(dp);
+        const ka = randAt(q => { const dd = Math.hypot(q.x - dp.x, q.z - dp.z); return dd > 50 && dd < 140 && W.height(q.x, q.z) > W.WATER + 0.12; });
+        const kb = randAt(q => { const dd = Math.hypot(q.x - dp.x, q.z - dp.z); return dd > 50 && dd < 140 && Math.hypot(q.x - ka.x, q.z - ka.z) > 70 && W.height(q.x, q.z) > W.WATER + 0.12; });
+        [ka, kb].forEach(q => tg(q, 'key', { name: '倉庫の鍵', prop: 'key', pic: 'key' }));
+      }
       else if (d.kind === 'cage' || d.kind === 'zone' || d.kind === 'door') tg(spot());
       else if (d.kind === 'tranq') M.need = d.need;
       M.s = M.T.map(() => 0);
@@ -1889,6 +1899,12 @@
         [-0.3, 0.3].forEach(z => { const sh = DG.PROPS.get('door', 2.4, { fit: 'h' }); sh.scale.x = 1.5; sh.position.set(0, -2.4, z); if (z > 0) sh.rotation.y = Math.PI; u.part.add(sh); });
       }
       if (!u.part) { u.part = box(1.6, 2.4, 0.12, 0x6a3a22, 0, 1.2, -0.2, { metalness: 0.5 }); box(0.2, 0.2, 0.25, 0x999999, 0.6, 1.2, -0.3); } }
+    else if (kind === 'key') { // (trial 'splitKey') a key hung on a stake, glinting
+      cyl(0.09, 1.1, 0x4a3a26, 0, 0.55); box(0.3, 0.05, 0.05, 0x4a3a26, 0, 1.05, 0.05);
+      const km = m(0xd8b050, { metalness: 0.8, roughness: 0.3 }), ring = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.016, 6, 14), km); ring.position.set(0.1, 0.94, 0.09); g.add(ring);
+      box(0.018, 0.12, 0.018, 0xd8b050, 0.1, 0.83, 0.09, { metalness: 0.8, roughness: 0.3 }); box(0.04, 0.02, 0.018, 0xd8b050, 0.12, 0.79, 0.09, { metalness: 0.8, roughness: 0.3 });
+      u.dim = glowS(0xffd870, 1.1, 0.6); u.dim.position.set(0.1, 0.9, 0.1); g.add(u.dim); u.hide = true;
+    }
     else if (kind === 'gen' || kind === 'box' || kind === 'dst') { /* the tower's own generator / fuse box, or the camp */ }
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return g;
@@ -1901,11 +1917,11 @@
     // every mission target: its prop, and a label (ghosts see all of them; the living only the near ones)
     CO.ms.forEach(M => M.T.forEach((t, i) => {
       if (t.k === 'box' || t.k === 'dst' || M.d.kind === 'gen') { t.lab = mk(t.p, t.k === 'dst' ? (M.d.to === 'gen' ? '発電機' : 'キャンプ') : M.d.name, '#ffe2a0', 3.4, 0.8); return; }
-      const kind = M.d.kind === 'code' ? t.k : M.d.prop || 'box', o = coProp(kind, i);
+      const kind = t.prop || (M.d.kind === 'code' ? t.k : M.d.prop || 'box'), o = coProp(kind, i);
       o.position.set(t.p.x, M.d.where === 'water' ? W.WATER : gy(t.p), t.p.z); o.rotation.y = (i * 1.7 + M.stage) % 6.283;
       CO.marks.props.add(o); t.obj = o;
       if (M.d.nest && i > 0) return; // one label for the whole nest
-      t.lab = labelSprite(M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : kind === 'cage' ? 6.8 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
+      t.lab = labelSprite(t.name || M.d.name, '#ffe2a0', 0.8); t.lab.position.set(t.p.x, gy(t.p) + (kind === 'lookout' ? 7.4 : kind === 'pole' ? 6.6 : kind === 'cage' ? 6.8 : 3), t.p.z); t.lab.visible = false; world.scene.add(t.lab);
     }));
     world.scene.add(g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props);
   }
@@ -2000,7 +2016,7 @@
     const me = P.pos, near = (q, r) => Math.hypot(q.x - me.x, q.z - me.z) < r, bag = coMine(), slot = VS.mySlot;
     for (let i = 0; i < CO.drops.length; i++) {
       const d = CO.drops[i]; if (!d || !near(d, 2.2)) continue;
-      if (d.k !== 'fz' && bag) return { text: `両手がふさがっている（${BAG_NAME[bag]}を運び中）` };
+      if (d.k !== 'fz' && bag && !(d.k === 'key' && bag === 'key' && coAlive().length < 2)) return { text: d.k === 'key' && bag === 'key' ? '鍵は1人1本まで — もう1本は仲間に' : `両手がふさがっている（${BAG_NAME[bag]}を運び中）` };
       return { id: 'd' + i, text: `落ちている${d.k === 'fz' ? 'ヒューズ' : BAG_NAME[d.k]}を拾う`, prog: d.p || 0 };
     }
     if (CO.phase === 'esc' && CO.esc.step === 0 && near(world.props.esc.act, 3.5)) {
@@ -2027,6 +2043,13 @@
         if (d.kind === 'sync') return { id: id(ti), text: coAlive().length > 1 ? d.verb : 'バルブを回す（1人なら片方ずつ）', prog: M.s[ti] };
         if (d.kind === 'gen') return { id: id(ti), text: coAlive().length > 1 ? '発電機を始動する（2人で同時に）' : '発電機を始動する（1人だと時間がかかる）', prog: M.s[ti] };
         if (d.kind === 'cage') return { id: id(ti), text: '檻に肉を仕掛ける', prog: M.s[ti] };
+        if (d.kind === 'door' && d.kd) { // (trial 'splitKey')
+          const solo = coAlive().length < 2;
+          if (t.k === 'key') return bag && !(bag === 'key' && solo) ? { text: bag === 'key' ? '鍵は1人1本まで — もう1本は仲間に' : `両手がふさがっている（${BAG_NAME[bag]}を運び中）` } : { id: id(ti), text: bag === 'key' ? '2本目の鍵を拾う（1人なので2本持てる）' : '倉庫の鍵を拾う', prog: M.s[ti] };
+          if (bag === 'key2') return { id: id(ti), text: '扉の鍵を2本とも回す（1人だと時間がかかる）', prog: M.s[ti] };
+          if (bag === 'key') return solo ? { text: 'もう1本の鍵が要る' } : { id: id(ti), text: '扉の鍵を回す（鍵を持った2人で同時に）', prog: M.s[ti] };
+          return { text: '鍵のかかった扉 — 2本の鍵を持った2人で同時に回す' };
+        }
         if (d.kind === 'door') return { id: id(ti), text: d.verb + '（何人でも速くなる）', prog: M.s[ti] };
       }
     }
@@ -2225,6 +2248,7 @@
   function coDropAll(p, pos) {
     const q = pos || p.tp.pos;
     if (CO.fz[p.slot] > 0) { CO.drops.push({ x: q.x, z: q.z, k: 'fz', n: CO.fz[p.slot], p: 0 }); CO.fz[p.slot] = 0; }
+    if (CO.bag[p.slot] === 'key2') { CO.drops.push({ x: q.x + 0.8, z: q.z, k: 'key', n: 1, p: 0 }, { x: q.x - 0.8, z: q.z, k: 'key', n: 1, p: 0 }); CO.bag[p.slot] = ''; }
     if (CO.bag[p.slot]) { CO.drops.push({ x: q.x + 0.8, z: q.z, k: CO.bag[p.slot], n: 1, p: 0 }); CO.bag[p.slot] = ''; }
   }
   function coLure(key, every, pos, r) { CO.lureT[key] = (CO.lureT[key] || 0) - VS.dtHost; if (CO.lureT[key] <= 0) { CO.lureT[key] = every; lureAt(pos, 'noise', null, r); } }
@@ -2238,6 +2262,7 @@
     else if (d.kind === 'fuse') { M.v += CO.fz[p.slot]; CO.fz[p.slot] = 0; M.s[ti] = 0; tellAll(`ヒューズ ${M.v}/${M.need} 本を取り付けた`, 2.5); }
     else if (d.kind === 'carry') { CO.bag[p.slot] = d.item; tell(p.tp, `${BAG_NAME[d.item]}を持った — ${d.to === 'gen' ? '無線塔の発電機' : 'キャンプ'}へ運べ`, 3); }
     else if (d.kind === 'cage') { tellAll('檻に肉を仕掛けた — 捕食者を誘い込め（檻に入ると閉じ込められる）', 3.5); }
+    else if (d.kd) { CO.bag[p.slot] = CO.bag[p.slot] === 'key' ? 'key2' : 'key'; tellAll(`${p.name} が倉庫の鍵を拾った（${M.s.slice(1).filter(s => s >= 1).length}/2）`, 2.5); }
   }
   function coHolds(dt, alive) {
     alive.forEach(p => {
@@ -2252,9 +2277,10 @@
         return;
       }
       if (h[0] === 'd') { // something dropped
-        const i = +h.slice(1), d = CO.drops[i]; if (!d || !nearP(p, d, 2.2) || (d.k !== 'fz' && CO.bag[p.slot])) return;
+        const i = +h.slice(1), d = CO.drops[i], two = d && d.k === 'key' && CO.bag[p.slot] === 'key' && alive.length < 2; // (a last survivor may hold both keys)
+        if (!d || !nearP(p, d, 2.2) || (d.k !== 'fz' && CO.bag[p.slot] && !two)) return;
         d.p += dt; if (d.p < 1) return;
-        if (d.k === 'fz') CO.fz[p.slot] += d.n; else CO.bag[p.slot] = d.k;
+        if (d.k === 'fz') CO.fz[p.slot] += d.n; else CO.bag[p.slot] = two ? 'key2' : d.k;
         CO.drops[i] = null; tell(p.tp, `落ちていた${d.k === 'fz' ? 'ヒューズ' : BAG_NAME[d.k]}を拾った`, 2.5);
         return;
       }
@@ -2262,7 +2288,7 @@
       const m = /^m(\d)\.(\d)$/.exec(h); if (!m) return;
       const M = CO.ms[+m[1]], ti = +m[2]; if (!coActive(M)) return;
       const d = M.d, t = M.T[ti];
-      if (!t || M.s[ti] >= 1 || ['sync', 'gen', 'photo', 'zone'].includes(d.kind)) return; // (those are run in coStep)
+      if (!t || M.s[ti] >= 1 || ['sync', 'gen', 'photo', 'zone'].includes(d.kind) || (d.kd && t.k !== 'key')) return; // (those are run in coStep)
       if (!nearP(p, t.p, d.kind === 'door' ? 3.6 : 2.6)) return;
       let dur = d.dur || 1;
       if (d.kind === 'hold' && d.where === 'water' && W.waterDepth(p.tp.pos.x, p.tp.pos.z) < 0.1) return;
@@ -2273,6 +2299,7 @@
       if (d.kind === 'fuse') { if (!CO.fz[p.slot]) return; dur = 1.2; }
       if (d.kind === 'carry') { if (t.k !== 'src' || CO.bag[p.slot]) return; dur = 1.2; }
       if (d.kind === 'cage') dur = 3;
+      if (d.kd) { const b = CO.bag[p.slot]; if (b && !(b === 'key' && alive.length < 2)) return; dur = 1.2; }
       if (d.lure) coLure(M.id + ti, 3, t.p, d.lure);
       M.s[ti] = Math.min(1, M.s[ti] + dt / dur);
       if (M.s[ti] >= 1) coFinish(M, ti, p);
@@ -2314,6 +2341,13 @@
         const a = roster.find(x => x.d.root.visible && Math.hypot(x.pos.x - t.p.x, x.pos.z - t.p.z) < 3 + 2 * x.ai.size);
         if (a) { M.v = 1; a.stun = 15; a.state = 'wander'; a.aware = 0; a.tgtP = null; a.attackT = -1; a.d.roar(2.2); A.roar(a.d.headPos(), a.ai.roarPitch, 1.8, 2.6, a.s); tellAll('捕食者が檻に閉じ込められた！（15秒で破られる）', 3.5); M.done = true; }
       }
+    } else if (d.kind === 'door' && d.kd) { // (trial 'splitKey') the two keys turned at once at the door
+      const at = holders(0).filter(p => CO.bag[p.slot] === 'key' || CO.bag[p.slot] === 'key2');
+      const n = at.reduce((s, p) => s + (CO.bag[p.slot] === 'key2' ? 2 : 1), 0), solo = at.length === 1 && n === 2;
+      M.go = n >= 2;
+      if (M.go) { M.s[0] = Math.min(1, M.s[0] + dt / (solo ? 8 : 3)); coLure('door', 3, M.T[0].p, 60); }
+      else M.s[0] = Math.max(0, M.s[0] - dt * 0.1);
+      if (M.s[0] >= 1) { at.forEach(p => CO.bag[p.slot] = ''); tellAll('倉庫の扉の鍵が開いた！', 2.5); }
     } else if (d.kind === 'zone') {
       const t = M.T[0];
       if (alive.some(p => nearP(p, t.p, d.r))) { M.v = Math.min(d.dur, M.v + dt); coLure('zone', 6, t.p, 110); }
@@ -2851,6 +2885,7 @@
     else if (d.kind === 'code') p = CO.know & (1 << slot) ? `暗証番号 <b>${CO.code}</b>` : '番号を探す';
     else if (d.kind === 'fuse') p = `${M.v}/${M.need} 本（手持ち ${CO.fz[slot]}）`;
     else if (d.kind === 'carry') p = `${M.v}/${M.need}`;
+    else if (d.kd) p = `鍵 ${M.s.slice(1).filter(s => s >= 1).length}/2・${Math.round(M.s[0] * 100)}%`;
     else if (d.kind === 'sync' || d.kind === 'gen' || d.kind === 'door') p = `${Math.round(Math.min(...M.s) * 100)}%`;
     else if (d.kind === 'photo') p = `${Math.round(M.v * 100)}%`;
     else if (d.kind === 'tranq') p = `命中 ${Math.min(M.v, M.need)}/${M.need}`;
@@ -2902,13 +2937,13 @@
         if (t.k === 'dst' && !ghost && !(bag && bag === M.d.item)) return;
         if (t.k === 'box' && !ghost && !CO.fz.some(v => v > 0) && !M.v) return;
         if (t.k === 'safe' && !ghost && !(CO.know & (1 << VS.mySlot))) return;
-        if (t.k === 'dst') add(t.p, M.d.to === 'gen' ? 'gen' : 'camp', true); else add(t.p, M.id, false);
+        if (t.k === 'dst') add(t.p, M.d.to === 'gen' ? 'gen' : 'camp', true); else add(t.p, t.pic || M.id, false);
       });
     });
     if (bag && !ghost) { const M = CO.ms.find(m => m.d.item === bag); if (M) add(M.T[M.T.length - 1].p, M.d.to === 'gen' ? 'gen' : 'camp', true); }
     if (CO.phase === 'esc') add(CO.esc.step === 2 ? W.GOAL : world.props.esc.act, CO.esc.step === 2 ? 'smoke' : ESC_PIC[W.SITES.esc], CO.esc.step === 2);
     if (ghost && CO.phase === 'm') W.SITES.caches.forEach((c, i) => { if (CO.fuseAt.has(i) && !CO.searched.has(i)) add(c, 'fuse', false); });
-    CO.drops.forEach(d => { if (d) add(d, d.k === 'fz' ? 'fuse' : 'crate', false); });
+    CO.drops.forEach(d => { if (d) add(d, d.k === 'fz' ? 'fuse' : d.k === 'key' ? 'key' : 'crate', false); });
     CO.pings.forEach(p => { const pl = VS.players[p.s]; out.push({ p, ping: p.f ? '#ff4060' : pl ? pl.color : '#9fd8ff' }); });
     // the safe zones while they are lit: the nearest on the compass, every one on the map (coMinimap adds the rest)
     if (safeOn() && !ghost) {
