@@ -3052,9 +3052,10 @@
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   // Lighter drawing of the night swamp (js/perf.js), each part a trial switched on this machine only:
-  // 'nearLights' only the lamps nearest you are lit.
+  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn.
   function coPerf() {
     DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
+    DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
   }
   function tick(dt) {
     T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();

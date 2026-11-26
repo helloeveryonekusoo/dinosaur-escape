@@ -1,13 +1,17 @@
-// Lighter drawing of the night swamp (co-op), a trial (js/trial.js) switched per machine:
+// Lighter drawing of the night swamp (co-op). Each part is a trial (js/trial.js), switched per machine:
 //  - lights (trial 'nearLights'): three.js shades every pixel with every light in the scene, lit or not (the
 //    swamp has about 14: the camp fire, the lanterns, the generator lamp, the flares, every seat's flashlight...).
 //    The scene's lamps are moved to a layer the camera doesn't see and a small fixed pool of lights (4 point, 2
 //    spot) takes the place of the ones nearest the viewer each frame. The pool never changes size, so no shader
 //    is recompiled mid-game. A light that casts shadows (your own flashlight on a computer) stays as it is.
+//  - cull (trial 'fogCull'): things past the fog (the props, crates, mission set pieces) were still drawn, ~600
+//    meshes on a night; a group whose nearest point is past where the fog is solid is left out of the drawing.
+//    Meshes that glow (fires, lanterns, beacons: unfogged, additive, unlit or emissive) are kept, since they are
+//    meant to be seen from afar.
 (function () {
   const HIDE = 31; // a layer no camera looks at
   const NP = 4, NS = 2;
-  const V = new THREE.Vector3();
+  const V = new THREE.Vector3(), V2 = new THREE.Vector3();
   let L = null; // { scene, srcP, srcS, poolP, poolS }
 
   const shown = o => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
@@ -51,6 +55,31 @@
     }
   }
 
+  const culled = new Set(), bound = new WeakMap();
+  // a fire, a lantern, a beacon: shows through the fog (ignores it, adds light, or shines by itself)
+  const glows = m => !m || m.fog === false || m.blending === THREE.AdditiveBlending || m.isMeshBasicMaterial ||
+    (m.emissive && m.emissiveIntensity > 0 && (m.emissive.r + m.emissive.g + m.emissive.b > 0.02 || m.emissiveMap));
+  function hideMeshes(g, hide) {
+    g.traverse(o => {
+      if (!o.isMesh || o.isInstancedMesh) return;
+      if (hide) {
+        if ([].concat(o.material).some(glows)) return; // meant to be seen through the fog
+        if (o.userData.perfMask == null) { o.userData.perfMask = o.layers.mask; o.layers.set(HIDE); }
+      } else if (o.userData.perfMask != null) { o.layers.mask = o.userData.perfMask; delete o.userData.perfMask; }
+    });
+  }
+  // how far a group reaches from its own position (measured once; moving things keep it)
+  function reach(g) {
+    let r = bound.get(g);
+    if (r == null) {
+      const b = new THREE.Box3().setFromObject(g);
+      r = b.isEmpty() ? 0 : g.getWorldPosition(V2).distanceTo(b.getCenter(V)) + b.getSize(V).length() / 2;
+      bound.set(g, r);
+    }
+    return r;
+  }
+  function uncullAll() { culled.forEach(g => hideMeshes(g, false)); culled.clear(); }
+
   DG.PERF = {
     // call every frame (and once before the shaders are compiled): on = trial 'nearLights'
     lights(scene, on, camera) {
@@ -60,8 +89,22 @@
       const cam = camera.getWorldPosition(new THREE.Vector3());
       fill(L.poolP, L.srcP, cam, false); fill(L.poolS, L.srcS, cam, true);
     },
+    // call every frame: on = trial 'fogCull'
+    cull(scene, on, camera) {
+      const f = scene.fog, far = !f ? 0 : f.isFogExp2 ? 2.4 / f.density : f.far; // (exp2 fog: 99.7% fogged at 2.4 / density)
+      if (!on || !far) { uncullAll(); return; }
+      const cam = camera.getWorldPosition(V2).clone();
+      for (const g of scene.children) {
+        if (g.isLight || g.isInstancedMesh || g.isSprite || g.isPoints || g.isLine || !(g.isGroup || g.isMesh || g.type === 'Object3D')) continue;
+        const r = reach(g); if (r > far) continue; // (the ground, the water: never)
+        const out = g.getWorldPosition(V).distanceTo(cam) - r > far;
+        if (out !== culled.has(g)) { hideMeshes(g, out); if (out) culled.add(g); else culled.delete(g); }
+      }
+      culled.forEach(g => { if (!g.parent) culled.delete(g); }); // removed from the scene meanwhile
+    },
     // back to drawing everything the normal way (end of a co-op game)
-    reset() { detach(); },
-    get pooled() { return L ? { point: L.srcP.length + '→' + L.poolP.length, spot: L.srcS.length + '→' + L.poolS.length } : null; }
+    reset() { detach(); uncullAll(); },
+    get pooled() { return L ? { point: L.srcP.length + '→' + L.poolP.length, spot: L.srcS.length + '→' + L.poolS.length } : null; },
+    get culled() { return culled.size; }
   };
 })();
