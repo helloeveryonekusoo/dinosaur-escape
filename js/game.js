@@ -1061,6 +1061,7 @@
     world = W.create(renderer, { scene, layout: { veg: 1, fern: 1 } });
     dinos.forEach(a => { a.d.ground = W.height; });
     if (COOP()) coLightsMake(); // before compiling, so the flashlights don't recompile every shader mid-game
+    if (COOP()) DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera); // (trial 'nearLights') the light pool too
     if (COOP() && DG.MINIMAP) { setLoad(0.8, '地図を描いています'); await frame(); DG.MINIMAP.build(W); } // (the minimap's picture of the swamp)
     setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
     renderer.compile(world.scene, camera);
@@ -1954,6 +1955,7 @@
   const disposeTree = o => o.traverse(c => { if (c.userData.shared) return; if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
   // take every co-op object out of the scene and stop its sounds (leaving the room, back to the lobby, a new game)
   function coCleanup() {
+    DG.PERF.reset();
     if (CO.lights) { CO.lights.forEach(l => { world.scene.remove(l, l.target); l.dispose(); }); CO.lights = null; }
     if (CO.rain) { world.scene.remove(CO.rain.m); disposeTree(CO.rain.m); CO.rain = null; }
     if (CO.marks) { [CO.marks.g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props].forEach(o => { world.scene.remove(o); disposeTree(o); }); CO.marks = null; }
@@ -3049,9 +3051,14 @@
   // report it and carry on with the next frame instead
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
+  // Lighter drawing of the night swamp (js/perf.js), each part a trial switched on this machine only:
+  // 'nearLights' only the lamps nearest you are lit.
+  function coPerf() {
+    DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
+  }
   function tick(dt) {
     T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();
-    if (VS.on) { versusTick(dt); renderer.render(world.scene, camera); return; }
+    if (VS.on) { versusTick(dt); if (COOP()) coPerf(); renderer.render(world.scene, camera); return; }
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
       const R = 4 + a.s.ai.size * 7, cx = W.START.x, cz = W.START.z - 12; // centre of the start glade (see okAt in world.js)
