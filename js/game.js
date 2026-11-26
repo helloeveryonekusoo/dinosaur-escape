@@ -115,9 +115,9 @@
         a.d.root.visible = true; a.pos.set(q.x - Math.sin(yaw) * 4.4, 0, q.z - Math.cos(yaw) * 4.4); a.heading = yaw;
         coCaught(a, p.tp, p); return 'caught ' + slot;
       },
-      // (testing: a co-op night hosted alone, offline -- seat 1 is an empty seat)
-      async coSolo(diff) {
-        VS.mode = 'coop'; VS.host = true; VS.mySlot = 0; VS.diff = vsDiffKey(diff || 'hard');
+      // (testing: a co-op night, or a race with mode 'race', hosted alone, offline -- seat 1 is an empty seat)
+      async coSolo(diff, mode) {
+        VS.mode = mode || 'coop'; VS.host = true; VS.mySlot = 0; VS.diff = vsDiffKey(diff || 'hard');
         VS.players = [mkPlayer(0, null, 'test'), mkPlayer(1, null, 'empty')];
         await vsPrepare((Math.random() * 1e6) | 0, vsList()); vsGo(); return 'ok';
       }, get roster2() { return roster; }, get state() { return state; }, set state(v) { state = v; }, get roster() { return roster; },
@@ -1062,6 +1062,7 @@
     dinos.forEach(a => { a.d.ground = W.height; });
     if (COOP()) coLightsMake(); // before compiling, so the flashlights don't recompile every shader mid-game
     if (COOP()) DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera); // (trial 'nearLights') the light pool too
+    else vsShadow(DG.TRIAL.on('raceShadow')); // (trial 'raceShadow') compiled with the shadow filtering it will use
     if (COOP() && DG.MINIMAP) { setLoad(0.8, '地図を描いています'); await frame(); DG.MINIMAP.build(W); } // (the minimap's picture of the swamp)
     setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
     renderer.compile(world.scene, camera);
@@ -1956,6 +1957,7 @@
   // take every co-op object out of the scene and stop its sounds (leaving the room, back to the lobby, a new game)
   function coCleanup() {
     DG.PERF.reset(); if (renderer.getPixelRatio() !== DG.Q.pr) renderer.setPixelRatio(DG.Q.pr);
+    vsShadow(false); // (a race's lighter shadows, back to normal)
     if (CO.lights) { CO.lights.forEach(l => { world.scene.remove(l, l.target); l.dispose(); }); CO.lights = null; }
     if (CO.rain) { world.scene.remove(CO.rain.m); disposeTree(CO.rain.m); CO.rain = null; }
     if (CO.marks) { [CO.marks.g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props].forEach(o => { world.scene.remove(o); disposeTree(o); }); CO.marks = null; }
@@ -3051,17 +3053,29 @@
   // report it and carry on with the next frame instead
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
-  // Lighter drawing of the night swamp (js/perf.js), each part a trial switched on this machine only:
-  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn, 'lowRes' a coarser picture.
-  function coPerf() {
-    DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
-    DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
-    const pr = DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
+  // Lighter drawing online, each part a trial switched on this machine only. The night swamp (js/perf.js):
+  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. A race (the shadows are
+  // most of its cost): 'raceShadow' a smaller, plainer shadow map.
+  // The night swamp also: 'lowRes' a coarser picture.
+  function vsPerf() {
+    if (COOP()) {
+      DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
+      DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
+    } else {
+      vsShadow(DG.TRIAL.on('raceShadow'));
+    }
+    const pr = COOP() && DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
     if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
+  }
+  // (trial 'raceShadow') the sun's shadow map in a race: 2048 with plain filtering (soft filtering costs every pixel)
+  function vsShadow(lite) {
+    const type = lite || !DG.Q.soft ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap, size = lite ? Math.min(2048, DG.Q.shadow) : DG.Q.shadow, sh = world.sun.shadow;
+    if (renderer.shadowMap.type !== type) { renderer.shadowMap.type = type; world.scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); }); }
+    if (!world.night && sh.mapSize.x !== size) { sh.mapSize.set(size, size); if (sh.map) { sh.map.dispose(); sh.map = null; } }
   }
   function tick(dt) {
     T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();
-    if (VS.on) { versusTick(dt); if (COOP()) coPerf(); renderer.render(world.scene, camera); return; }
+    if (VS.on) { versusTick(dt); vsPerf(); renderer.render(world.scene, camera); return; }
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
       const R = 4 + a.s.ai.size * 7, cx = W.START.x, cz = W.START.z - 12; // centre of the start glade (see okAt in world.js)
