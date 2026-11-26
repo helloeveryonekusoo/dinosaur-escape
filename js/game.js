@@ -1957,7 +1957,7 @@
   // take every co-op object out of the scene and stop its sounds (leaving the room, back to the lobby, a new game)
   function coCleanup() {
     DG.PERF.reset(); if (renderer.getPixelRatio() !== DG.Q.pr) renderer.setPixelRatio(DG.Q.pr);
-    vsShadow(false); // (a race's lighter shadows, back to normal)
+    vsShadow(false); renderer.shadowMap.autoUpdate = true; // (a race's lighter shadows, back to normal)
     if (CO.lights) { CO.lights.forEach(l => { world.scene.remove(l, l.target); l.dispose(); }); CO.lights = null; }
     if (CO.rain) { world.scene.remove(CO.rain.m); disposeTree(CO.rain.m); CO.rain = null; }
     if (CO.marks) { [CO.marks.g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props].forEach(o => { world.scene.remove(o); disposeTree(o); }); CO.marks = null; }
@@ -3055,14 +3055,17 @@
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   // Lighter drawing online, each part a trial switched on this machine only. The night swamp (js/perf.js):
   // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. A race (the shadows are
-  // most of its cost): 'raceShadow' a smaller, plainer shadow map.
+  // most of its cost): 'raceShadow' a smaller, plainer shadow map, 'shadowHalf' the shadows redrawn every other frame.
   // The night swamp also: 'lowRes' a coarser picture.
+  let perfN = 0;
   function vsPerf() {
     if (COOP()) {
       DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
       DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
     } else {
       vsShadow(DG.TRIAL.on('raceShadow'));
+      const half = DG.TRIAL.on('shadowHalf'); // (the map keeps its own matrix, so between redraws still things stay put; a moving dinosaur's shadow lags a frame)
+      renderer.shadowMap.autoUpdate = !half; if (half) renderer.shadowMap.needsUpdate = (perfN++ & 1) === 0;
     }
     const pr = COOP() && DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
     if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
