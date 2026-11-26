@@ -3056,7 +3056,7 @@
   // Lighter drawing online, each part a trial switched on this machine only. The night swamp (js/perf.js):
   // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. A race (the shadows are
   // most of its cost): 'raceShadow' a smaller, plainer shadow map, 'shadowHalf' the shadows redrawn every other frame.
-  // The night swamp also: 'lowRes' a coarser picture.
+  // Both: 'lowRes' a coarser picture.
   let perfN = 0;
   function vsPerf() {
     if (COOP()) {
@@ -3067,7 +3067,7 @@
       const half = DG.TRIAL.on('shadowHalf'); // (the map keeps its own matrix, so between redraws still things stay put; a moving dinosaur's shadow lags a frame)
       renderer.shadowMap.autoUpdate = !half; if (half) renderer.shadowMap.needsUpdate = (perfN++ & 1) === 0;
     }
-    const pr = COOP() && DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
+    const pr = DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
     if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   }
   // (trial 'raceShadow') the sun's shadow map in a race: 2048 with plain filtering (soft filtering costs every pixel)
