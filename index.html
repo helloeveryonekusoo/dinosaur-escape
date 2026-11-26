@@ -86,6 +86,8 @@
   #trialBox .tr{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:4px}
   #trialBox .toggle button,#pause #trialBox .toggle button{padding:3px 12px;font-size:12px;margin:0}
   @media (max-height:560px){ #trialBox{margin-top:8px;padding:5px 10px;display:grid;grid-template-columns:1fr 1fr;column-gap:18px} #trialBox .tt{grid-column:1/-1} #trialBox .tr{margin-top:3px} } /* (a phone held sideways: the switches in two columns) */
+  @media (max-height:560px) and (min-width:760px){ #trialBox{grid-template-columns:1fr 1fr 1fr;column-gap:14px;font-size:11px} #trialBox .tr{gap:8px} #trialBox .toggle button,#pause #trialBox .toggle button{padding:3px 9px} } /* (three columns when there is room) */
+  @media (max-height:560px){ #trialBox{max-height:46vh;overflow-y:auto} }
   #pause{display:none;z-index:25;pointer-events:auto;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
   /* ---- 3-player race ---- */
   #vsLobby{display:none;z-index:28;pointer-events:auto;align-items:center;justify-content:center;background:rgba(0,0,0,.6);overflow-y:auto}

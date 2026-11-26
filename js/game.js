@@ -1955,7 +1955,7 @@
   const disposeTree = o => o.traverse(c => { if (c.userData.shared) return; if (c.geometry) c.geometry.dispose(); if (c.material) { if (c.material.map) c.material.map.dispose(); c.material.dispose(); } });
   // take every co-op object out of the scene and stop its sounds (leaving the room, back to the lobby, a new game)
   function coCleanup() {
-    DG.PERF.reset();
+    DG.PERF.reset(); if (renderer.getPixelRatio() !== DG.Q.pr) renderer.setPixelRatio(DG.Q.pr);
     if (CO.lights) { CO.lights.forEach(l => { world.scene.remove(l, l.target); l.dispose(); }); CO.lights = null; }
     if (CO.rain) { world.scene.remove(CO.rain.m); disposeTree(CO.rain.m); CO.rain = null; }
     if (CO.marks) { [CO.marks.g, CO.marks.pg, CO.marks.dg, CO.marks.tg, CO.marks.props].forEach(o => { world.scene.remove(o); disposeTree(o); }); CO.marks = null; }
@@ -3052,10 +3052,12 @@
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
   // Lighter drawing of the night swamp (js/perf.js), each part a trial switched on this machine only:
-  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn.
+  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn, 'lowRes' a coarser picture.
   function coPerf() {
     DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
     DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
+    const pr = DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
+    if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   }
   function tick(dt) {
     T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();
