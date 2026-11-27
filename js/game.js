@@ -103,6 +103,7 @@
     }
     items = DG.makeItems({ scene: world.scene, P, camera, msg, A });
     setLoad(1, 'シェーダーをコンパイル中'); await frame();
+    vsShadow(DG.TRIAL.on('raceShadow')); // (trial 'raceShadow') compiled with the shadow filtering the forest will use
     renderer.compile(world.scene, camera);
     $('loading').style.display = 'none';
     bindUI(); toMenu();
@@ -347,6 +348,7 @@
     world = W.create(renderer, { scene });
     dinos.forEach(a => { a.d.ground = W.height; });
     setLoad(0.9, 'シェーダーをコンパイル中'); await frame();
+    vsShadow(DG.TRIAL.on('raceShadow'));
     renderer.compile(world.scene, camera);
     setLoad(1, ''); $('loading').style.display = 'none';
   }
@@ -3053,24 +3055,24 @@
   // report it and carry on with the next frame instead
   function loop() { try { tick(Math.min(clock.getDelta(), 1 / 20)); } catch (e) { console.error(e); } }
   DG._step = (n, dt) => { for (let i = 0; i < n; i++) tick(dt || 1 / 30); };
-  // Lighter drawing online, each part a trial switched on this machine only. The night swamp (js/perf.js):
-  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. A race (the shadows are
-  // most of its cost): 'raceShadow' a smaller, plainer shadow map, 'shadowHalf' the shadows redrawn every other frame.
-  // Both: 'lowRes' a coarser picture.
+  // Lighter drawing, each part a trial switched on this machine only. The night swamp (js/perf.js):
+  // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. The forest, alone or in
+  // a race (the shadows are much of its cost): 'raceShadow' a smaller, plainer shadow map, 'shadowHalf' (in a race) the
+  // shadows redrawn every other frame. Online: 'lowRes' a coarser picture.
   let perfN = 0;
-  function vsPerf() {
-    if (COOP()) {
-      DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera);
-      DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera);
+  function perfTick() {
+    if (world.night) { // (also while a co-op night is loading, before VS.on: its shadows stay as they always were)
+      if (VS.on) { DG.PERF.lights(world.scene, DG.TRIAL.on('nearLights'), camera); DG.PERF.cull(world.scene, DG.TRIAL.on('fogCull'), camera); }
+      vsShadow(false); renderer.shadowMap.autoUpdate = true;
     } else {
       vsShadow(DG.TRIAL.on('raceShadow'));
-      const half = DG.TRIAL.on('shadowHalf'); // (the map keeps its own matrix, so between redraws still things stay put; a moving dinosaur's shadow lags a frame)
+      const half = VS.on && DG.TRIAL.on('shadowHalf'); // (the map keeps its own matrix, so between redraws still things stay put; a moving dinosaur's shadow lags a frame)
       renderer.shadowMap.autoUpdate = !half; if (half) renderer.shadowMap.needsUpdate = (perfN++ & 1) === 0;
     }
-    const pr = DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
+    const pr = VS.on && DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
     if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   }
-  // (trial 'raceShadow') the sun's shadow map in a race: 2048 with plain filtering (soft filtering costs every pixel)
+  // (trial 'raceShadow') the sun's shadow map in the forest: 2048 with plain filtering (soft filtering costs every pixel)
   function vsShadow(lite) {
     const type = lite || !DG.Q.soft ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap, size = lite ? Math.min(2048, DG.Q.shadow) : DG.Q.shadow, sh = world.sun.shadow;
     if (renderer.shadowMap.type !== type) { renderer.shadowMap.type = type; world.scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); }); }
@@ -3078,7 +3080,8 @@
   }
   function tick(dt) {
     T += dt; smAge += dt; $('stealth').classList.toggle('on', smAge < 0.25); if (DG.MOBILE) touchUI();
-    if (VS.on) { versusTick(dt); vsPerf(); renderer.render(world.scene, camera); return; }
+    perfTick();
+    if (VS.on) { versusTick(dt); renderer.render(world.scene, camera); return; }
     if (state === 'menu') {
       const a = dexDino; dexT += dt;
       const R = 4 + a.s.ai.size * 7, cx = W.START.x, cz = W.START.z - 12; // centre of the start glade (see okAt in world.js)
