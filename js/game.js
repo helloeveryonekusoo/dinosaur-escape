@@ -3058,7 +3058,7 @@
   // Lighter drawing, each part a trial switched on this machine only. The night swamp (js/perf.js):
   // 'nearLights' only the lamps nearest you are lit, 'fogCull' nothing past the fog is drawn. The forest, alone or in
   // a race (the shadows are much of its cost): 'raceShadow' a smaller, plainer shadow map, 'shadowHalf' the shadows
-  // redrawn every other frame. Online: 'lowRes' a coarser picture.
+  // redrawn every other frame. Everywhere: 'lowRes' a coarser picture.
   let perfN = 0;
   function perfTick() {
     if (world.night) { // (also while a co-op night is loading, before VS.on: its shadows stay as they always were)
@@ -3069,7 +3069,7 @@
       const half = DG.TRIAL.on('shadowHalf'); // (the map keeps its own matrix, so between redraws still things stay put; a moving dinosaur's shadow lags a frame)
       renderer.shadowMap.autoUpdate = !half; if (half) renderer.shadowMap.needsUpdate = (perfN++ & 1) === 0;
     }
-    const pr = VS.on && DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
+    const pr = DG.TRIAL.on('lowRes') ? Math.max(0.5, DG.Q.pr * 0.75) : DG.Q.pr;
     if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   }
   // (trial 'raceShadow') the sun's shadow map in the forest: 2048 with plain filtering (soft filtering costs every pixel)
